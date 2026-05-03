@@ -1,5 +1,7 @@
 # AI Agents Services
 
+> **For the full project setup (all 3 services + API keys + troubleshooting), see [../../Readme.md](../../Readme.md). This file only covers running the Agents folder in isolation.**
+
 The Python FastAPI services that power AI features (RAG, chat, risk/control analysis). This README is tailored for beginners running ONLY the `Agents/` folder after cloning it separately.
 
 ## 🧰 What you need

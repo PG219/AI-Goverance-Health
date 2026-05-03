@@ -18,8 +18,8 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.post('/collect', async (req, res) => {
   try {
     const { session_id, messages } = req.body;
-    if (!session_id || !messages) {
-      return res.status(400).json({ success: false, error: 'session_id and messages are required' });
+    if (!messages) {
+      return res.status(400).json({ success: false, error: 'messages is required' });
     }
     const response = await axios.post(`${AGENT_URL}/agent/collection/collect`, { session_id, messages });
     res.json({ success: true, data: response.data });

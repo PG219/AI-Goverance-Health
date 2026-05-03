@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 # MCP and LLM Imports
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 
 load_dotenv()
 
@@ -30,7 +30,7 @@ class AtlassianIntegration:
             return Confluence(url=self.url, username=self.username, password=self.password, cloud=True)
         return None
 
-    async def _jira_mcp_operation(self, query: str = "issuetype IN (Epic, Story, Task, Requirement)") -> List[Dict[str, Any]]:
+    async def _jira_mcp_operation(self, query: str = "issuetype IN (Epic, Story, Task, Requirement, Feature)") -> List[Dict[str, Any]]:
         if not all([self.url, self.username, self.password]):
             print("[MCP ERROR] Missing credentials.")
             return []
@@ -43,7 +43,7 @@ class AtlassianIntegration:
             try:
                 # If query is just "issuetype = Epic", override with broader one for better discovery
                 if query == "issuetype = Epic":
-                    query = "issuetype IN (Epic, Story, Task, Requirement)"
+                    query = "issuetype IN (Epic, Story, Task, Requirement, Feature)"
                 
                 print(f"[MCP-Jira] Discovering issues via REST (JQL: {query})...")
                 issues = jira.jql(query, limit=50)
@@ -103,7 +103,7 @@ class AtlassianIntegration:
 
         # 4. AI Extraction
         try:
-            llm = ChatGoogleGenerativeAI(model=os.getenv("GEMINI_CHAT_MODEL", "gemini-1.5-pro"), temperature=0.1)
+            llm = ChatOpenAI(model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"), temperature=0.1)
             prompt = f"""
             Analyze these Jira issues: {all_content[:35000]}
             Extract all security requirements or project goals.
@@ -129,7 +129,7 @@ class AtlassianIntegration:
             print(f"[MCP-Jira AI Error] {e}")
             return []
 
-    async def fetch_jira_issues(self, query: str = "issuetype IN (Epic, Story, Task, Requirement)") -> List[Dict[str, Any]]:
+    async def fetch_jira_issues(self, query: str = "issuetype IN (Epic, Story, Task, Requirement, Feature)") -> List[Dict[str, Any]]:
         return await self._jira_mcp_operation(query)
 
     async def _confluence_mcp_operation(self, query: str, page_id: str = None, mode: str = "requirements") -> List[Dict[str, Any]]:
@@ -194,13 +194,17 @@ class AtlassianIntegration:
                         for pid in pids[:20]:
                             content = None
                             if read_tool:
-                                try:
-                                    res = await session.call_tool(read_tool, {"pageId": str(pid)})
-                                    if res and res.content:
-                                        content = res.content[0].text
-                                        print(f"[MCP] Read page {pid} via MCP")
-                                except: pass
-                            
+                                for arg_name in ("pageId", "id", "contentId", "page_id"):
+                                    try:
+                                        res = await session.call_tool(read_tool, {arg_name: str(pid)})
+                                        if res and not getattr(res, "isError", False) and res.content:
+                                            txt = res.content[0].text
+                                            if not (txt.startswith("Input validation error") or "MCP Error" in txt[:50]):
+                                                content = txt
+                                                print(f"[MCP] Read page {pid} via MCP (arg={arg_name})")
+                                                break
+                                    except: pass
+
                             if not content and conf:
                                 try:
                                     pdata = conf.get_page_by_id(pid, expand='body.storage')
@@ -226,7 +230,7 @@ class AtlassianIntegration:
                     if not all_collected_content: return []
 
                     # 3. AI Extraction
-                    llm = ChatGoogleGenerativeAI(model=os.getenv("GEMINI_CHAT_MODEL", "gemini-1.5-pro"), temperature=0.1)
+                    llm = ChatOpenAI(model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"), temperature=0.1)
                     prompt = f"""
                     Analyze these Confluence pages: {all_collected_content[:40000]}
                     {attachments_info}

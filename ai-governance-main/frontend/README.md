@@ -1,5 +1,7 @@
 # Frontend User Interface
 
+> **For the full project setup (all 3 services + API keys + troubleshooting), see [../Readme.md](../Readme.md). This file only covers running the frontend folder in isolation.**
+
 A Vite + React app for the Governance Platform. This README is tailored for beginners running ONLY the `Frontend/` folder after cloning it separately.
 
 ## 🧰 What you need

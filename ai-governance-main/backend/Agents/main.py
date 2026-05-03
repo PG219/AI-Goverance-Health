@@ -369,7 +369,7 @@ def _safe_include(router_import_callable, prefix: str, name: str):
         router = router_import_callable()
         app.include_router(router, prefix=prefix, tags=[name])
         print(f"[OK] Mounted {name} at {prefix}")
-    except Exception as e:
+    except BaseException as e:
         print(f"[WARN] Skipped dynamic agent '{name}': {e}")
 
 
@@ -380,7 +380,7 @@ app.include_router(excel_agent_router, prefix="/agent")
 print("[OK] Mounted built-in Excel Agent at /agent")
 
 # 2. Keep the dynamic, resilient loading for other external agents
-_safe_include(lambda: __import__("agents.chat_agent", fromlist=["router"]).router,
+_safe_include(lambda: __import__("agents.waste.chat_agent", fromlist=["router"]).router,
               "/agent/chat", "chat_agent")
 
 _safe_include(lambda: __import__("agents.risk_matrix_agent", fromlist=["router"]).router,
@@ -397,7 +397,7 @@ def _mount_governance():
             app.include_router(gapp.router, prefix="/agent/governance", tags=["governance_agent"])
             print(f"[OK] Mounted governance app from {modname} at /agent/governance")
             return
-        except Exception as e:
+        except BaseException as e:
             print(f"[WARN] Governance module '{modname}' not used: {e}")
     # If no governance module is found, add a fallback stub so the backend never 404s.
     @app.post("/agent/governance/assess", tags=["governance_agent (stub)"])
@@ -414,7 +414,7 @@ _safe_include(lambda: __import__("agents.collection_agent", fromlist=["router"])
 
 # --- Atlassian Integration Endpoints ---
 @app.get("/agent/integrations/jira")
-async def jira_sync(jql: str = "issuetype IN (Epic, Story, Task, Requirement)"):
+async def jira_sync(jql: str = "issuetype IN (Epic, Story, Task, Requirement, Feature)"):
     issues = await integration_service.fetch_jira_issues(jql)
     return {"status": "success", "count": len(issues), "data": issues}
 

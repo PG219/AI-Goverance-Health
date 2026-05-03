@@ -1,5 +1,7 @@
 # AI Governance Backend
 
+> **For the full project setup (all 3 services + API keys + troubleshooting), see [../Readme.md](../Readme.md). This file only covers running the backend folder in isolation.**
+
 A Node.js/Express API that powers governance, risk, and compliance features. This README is tailored for beginners running ONLY the `Backend/` folder after cloning it separately.
 
 ## 🧰 What you need

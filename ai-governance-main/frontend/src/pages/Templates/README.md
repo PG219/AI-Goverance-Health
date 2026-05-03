@@ -1,5 +1,7 @@
 # Templates Page
 
+> **For the full project setup, see [../../../../Readme.md](../../../../Readme.md). This file only documents the Templates page feature.**
+
 This page allows users to manage and create assessment templates for AI governance.
 
 ## Features

@@ -3,7 +3,7 @@ import json
 from typing import List, Optional, Dict, Any, TypedDict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
@@ -14,8 +14,8 @@ load_dotenv()
 router = APIRouter()
 
 # ---- Config ----
-MODEL_NAME = os.getenv("GEMINI_CHAT_MODEL", "gemini-1.5-pro")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+MODEL_NAME = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # ---- DB Mock / Cache ----
 # In a real app, this would be in MongoDB
@@ -56,7 +56,7 @@ Conversation:
 
 # ---- Nodes ----
 def extract_requirements(state: CollectionState):
-    llm = ChatGoogleGenerativeAI(model=MODEL_NAME, temperature=0)
+    llm = ChatOpenAI(model=MODEL_NAME, temperature=0)
     history = "\n".join([f"{m['role']}: {m['content']}" for m in state['messages']])
     
     prompt = EXTRACTION_PROMPT.format(history=history)
@@ -77,7 +77,7 @@ def extract_requirements(state: CollectionState):
         return {"requirements": []}
 
 def generate_response(state: CollectionState):
-    llm = ChatGoogleGenerativeAI(model=MODEL_NAME, temperature=0.2)
+    llm = ChatOpenAI(model=MODEL_NAME, temperature=0.2)
     history = "\n".join([f"{m['role']}: {m['content']}" for m in state['messages']])
     
     prompt = CHAT_PROMPT.format(history=history)
@@ -142,13 +142,12 @@ def extract_text_from_excel(content: bytes) -> str:
 async def collect_requirements(payload: CollectionIn):
     sid = payload.session_id or "new-session"
     
-    if not GOOGLE_API_KEY or GOOGLE_API_KEY == "your_google_api_key_here":
-        # ... logic for missing key ...
-        print("[ERROR] GOOGLE_API_KEY is missing!")
+    if not OPENAI_API_KEY:
+        print("[ERROR] OPENAI_API_KEY is missing!")
         return CollectionOut(
             session_id=sid,
             requirements=[],
-            answer="AI not configured. Add GOOGLE_API_KEY.",
+            answer="AI not configured. Add OPENAI_API_KEY.",
             finished=False
         )
 
@@ -199,7 +198,7 @@ async def upload_document(
         ]
 
         # Use the existing extraction node logic
-        llm = ChatGoogleGenerativeAI(model=MODEL_NAME, temperature=0)
+        llm = ChatOpenAI(model=MODEL_NAME, temperature=0)
         history = f"DOCUMENT: {filename}\nCONTENT:\n{extracted_text[:10000]}" # Truncated for prompt safety
         
         prompt = EXTRACTION_PROMPT.format(history=history)
