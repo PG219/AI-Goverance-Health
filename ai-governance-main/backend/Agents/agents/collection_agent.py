@@ -3,19 +3,19 @@ import json
 from typing import List, Optional, Dict, Any, TypedDict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
+from .llm_provider import get_chat_model
 
 load_dotenv()
 
 router = APIRouter()
 
 # ---- Config ----
-MODEL_NAME = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+MODEL_NAME = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # ---- DB Mock / Cache ----
 # In a real app, this would be in MongoDB
@@ -45,10 +45,13 @@ Conversation:
 """
 
 CHAT_PROMPT = """
-You are a Security Consultant helping a user gather requirements for their project.
-Your goal is to be helpful and professional. 
-Ask one follow-up question at a time to uncover more security needs if necessary.
-If you have enough information, summarize what you've found.
+You are a Security Consultant helping a user gather security requirements for an AI governance inventory.
+
+Work as a guided intake assistant:
+- Ask one relevant follow-up question at a time when the user's input is incomplete.
+- If you can infer useful requirements, briefly summarize them and ask the user to confirm before they are added to inventory.
+- Do not claim you have saved anything. The application will save only after the user confirms.
+- After confirmation, move to the next useful topic such as authentication, data protection, logging, model governance, incident response, or compliance mapping.
 
 Conversation:
 {history}
@@ -56,7 +59,7 @@ Conversation:
 
 # ---- Nodes ----
 def extract_requirements(state: CollectionState):
-    llm = ChatOpenAI(model=MODEL_NAME, temperature=0)
+    llm = get_chat_model(temperature=0)
     history = "\n".join([f"{m['role']}: {m['content']}" for m in state['messages']])
     
     prompt = EXTRACTION_PROMPT.format(history=history)
@@ -77,7 +80,7 @@ def extract_requirements(state: CollectionState):
         return {"requirements": []}
 
 def generate_response(state: CollectionState):
-    llm = ChatOpenAI(model=MODEL_NAME, temperature=0.2)
+    llm = get_chat_model(temperature=0.2)
     history = "\n".join([f"{m['role']}: {m['content']}" for m in state['messages']])
     
     prompt = CHAT_PROMPT.format(history=history)
@@ -142,12 +145,12 @@ def extract_text_from_excel(content: bytes) -> str:
 async def collect_requirements(payload: CollectionIn):
     sid = payload.session_id or "new-session"
     
-    if not OPENAI_API_KEY:
-        print("[ERROR] OPENAI_API_KEY is missing!")
+    if not GOOGLE_API_KEY:
+        print("[ERROR] GOOGLE_API_KEY is missing!")
         return CollectionOut(
             session_id=sid,
             requirements=[],
-            answer="AI not configured. Add OPENAI_API_KEY.",
+            answer="AI not configured. Add GOOGLE_API_KEY.",
             finished=False
         )
 
@@ -198,7 +201,7 @@ async def upload_document(
         ]
 
         # Use the existing extraction node logic
-        llm = ChatOpenAI(model=MODEL_NAME, temperature=0)
+        llm = get_chat_model(temperature=0)
         history = f"DOCUMENT: {filename}\nCONTENT:\n{extracted_text[:10000]}" # Truncated for prompt safety
         
         prompt = EXTRACTION_PROMPT.format(history=history)

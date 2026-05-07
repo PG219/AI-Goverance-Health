@@ -24,8 +24,8 @@ const securityRequirementSchema = new mongoose.Schema({
   
   // Basic Information
   projectId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Projects'
+    type: String,
+    index: true
   },
   title: {
     type: String,

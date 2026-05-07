@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 # MCP and LLM Imports
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from langchain_openai import ChatOpenAI
+from .llm_provider import get_chat_model
 
 load_dotenv()
 
@@ -103,7 +103,7 @@ class AtlassianIntegration:
 
         # 4. AI Extraction
         try:
-            llm = ChatOpenAI(model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"), temperature=0.1)
+            llm = get_chat_model(temperature=0.1)
             prompt = f"""
             Analyze these Jira issues: {all_content[:35000]}
             Extract all security requirements or project goals.
@@ -230,7 +230,7 @@ class AtlassianIntegration:
                     if not all_collected_content: return []
 
                     # 3. AI Extraction
-                    llm = ChatOpenAI(model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"), temperature=0.1)
+                    llm = get_chat_model(temperature=0.1)
                     prompt = f"""
                     Analyze these Confluence pages: {all_collected_content[:40000]}
                     {attachments_info}

@@ -89,6 +89,7 @@ python-socketio
 pytz
 PyYAML
 qdrant-client
+langchain-qdrant
 referencing
 regex
 requests

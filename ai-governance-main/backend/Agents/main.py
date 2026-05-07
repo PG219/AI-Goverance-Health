@@ -13,6 +13,14 @@ from pydantic import BaseModel
 
 # --- Initialization from Orchestrator ---
 from agents.integration_service import integration_service
+from agents.library_store import (
+    import_excel_libraries,
+    library_counts,
+    read_ai_risks_from_store,
+    read_ai_controls_from_store,
+    read_cyber_risks_from_store,
+    read_nist_controls_from_store,
+)
 load_dotenv()
 app = FastAPI(title="AI Governance Agent API (Combined)", version="2.0.0")
 
@@ -47,16 +55,16 @@ def _read_xlsx(path: Path, sheet: str) -> pd.DataFrame:
     return df
 
 def read_ai_risks() -> pd.DataFrame:
-    return _read_xlsx(PREDEFINED_RISKS_XLSX, SHEET_PREDEFINED_RISKS)
+    return read_ai_risks_from_store()
 
 def read_ai_controls() -> pd.DataFrame:
-    return _read_xlsx(PREDEFINED_CONTROLS_XLSX, SHEET_PREDEFINED_CONTROLS)
+    return read_ai_controls_from_store()
 
 def read_cyber_risks() -> pd.DataFrame:
-    return _read_xlsx(STRIDE_RISKS_XLSX, SHEET_STRIDE_RISKS)
+    return read_cyber_risks_from_store()
 
 def read_nist_controls() -> pd.DataFrame:
-    return _read_xlsx(NIST_CONTROLS_XLSX, SHEET_NIST_CONTROLS)
+    return read_nist_controls_from_store()
 
 def _mk_assessment_id(session_id: str) -> str:
     return f"RC-{session_id[:8].upper()}"
@@ -446,6 +454,31 @@ async def startup_event():
             print("[OK] Mounted RAG at /agent/rag")
     except Exception as e:
         print(f"[WARN] RAG service init skipped: {e}")
+        mount_rag_unavailable(str(e))
+
+
+def mount_rag_unavailable(reason: str):
+    @app.post("/agent/rag/sync-gcs", tags=["rag_agent (unavailable)"])
+    async def rag_sync_unavailable():
+        raise HTTPException(
+            status_code=503,
+            detail=f"RAG service is unavailable: {reason}",
+        )
+
+    @app.post("/agent/rag/query", tags=["rag_agent (unavailable)"])
+    async def rag_query_unavailable(payload: Dict[str, Any] = Body(default={})):
+        raise HTTPException(
+            status_code=503,
+            detail=f"RAG service is unavailable: {reason}",
+        )
+
+    @app.get("/agent/rag/status", tags=["rag_agent (unavailable)"])
+    async def rag_status_unavailable():
+        return {
+            "indexed_file_count": 0,
+            "available": False,
+            "reason": reason,
+        }
 
 
 # --- Health and Root Endpoints ---
@@ -456,6 +489,14 @@ def read_root():
 @app.get("/health", tags=["Health"])
 def health_check():
     return {"status": "healthy"}
+
+@app.get("/agent/libraries/status", tags=["Libraries"])
+def libraries_status():
+    return library_counts()
+
+@app.post("/agent/libraries/import", tags=["Libraries"])
+def libraries_import():
+    return import_excel_libraries()
 
 
 # --- Run command (for direct execution) ---

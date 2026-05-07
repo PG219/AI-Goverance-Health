@@ -10,7 +10,18 @@ async function createAdmin() {
         role: "admin"
       })
     });
-    const data = await response.json();
+
+    const text = await response.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(
+        `Expected JSON but received ${response.headers.get('content-type') || 'unknown content type'} ` +
+        `with status ${response.status}:\n${text.slice(0, 500)}`
+      );
+    }
+
     console.log('Status:', response.status);
     console.log('Data:', data);
   } catch (error) {

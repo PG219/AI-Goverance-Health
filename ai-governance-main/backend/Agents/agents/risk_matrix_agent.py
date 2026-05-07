@@ -1,7 +1,6 @@
 # agents/risk_control_agent.py
 
 import os
-import openai
 import pandas as pd
 import asyncio
 from fastapi import APIRouter, HTTPException
@@ -12,9 +11,8 @@ from typing import List, Dict, Any, Optional
 # --- UPDATED IMPORT ---
 # Import the new markdown variable and remove unused ones
 from .utils import PREDEFINED_RISKS_MARKDOWN
+from .llm_provider import invoke_text
 
-# Load API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
 logger = logging.getLogger("uvicorn")
 
 router = APIRouter()
@@ -149,7 +147,7 @@ def parse_control_table(table_content: str, risk_assessment_id: str) -> List[Dic
 
 # --- UPDATED: Risk Generation Function ---
 async def generate_risk_matrix(summary: str) -> str:
-    """Generate risk matrix using OpenAI."""
+    """Generate risk matrix using Gemini."""
     system_prompt = f"""
         You are a risk analysis expert. Your task is to identify applicable risks from a predefined library based on a user's summary.
 
@@ -166,23 +164,20 @@ async def generate_risk_matrix(summary: str) -> str:
         """
 
     try:
-        resp = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
+        return invoke_text(
+            [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": summary}
             ],
             temperature=0.5,
-            max_tokens=800,
         )
-        return resp.choices[0].message.content.strip()
     except Exception as e:
         logger.error(f"Error generating risk matrix: {str(e)}")
         raise HTTPException(500, f"Error generating risk matrix: {str(e)}")
 
 # --- Control Generation Function (Unchanged) ---
 async def generate_control_matrix(risk_matrix: str, controls_df: pd.DataFrame) -> str:
-    """Generate control matrix using OpenAI."""
+    """Generate control matrix using Gemini."""
     controls_markdown = controls_df.to_markdown(index=False)
     
     system_prompt = f"""
@@ -209,16 +204,13 @@ Do not include any prefix or explanation text, just the markdown table.
 """
 
     try:
-        resp = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
+        return invoke_text(
+            [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Please perform a control assessment based on the following risk matrix:\n\n{risk_matrix}"}
             ],
             temperature=0.3,
-            max_tokens=1000,
         )
-        return resp.choices[0].message.content.strip()
     except Exception as e:
         logger.error(f"Error generating control matrix: {str(e)}")
         raise HTTPException(500, f"Error generating control matrix: {str(e)}")

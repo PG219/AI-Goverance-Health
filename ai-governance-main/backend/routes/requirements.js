@@ -1,6 +1,7 @@
 import express from 'express';
 import axios from 'axios';
 import SecurityRequirement from '../models/SecurityRequirement.js';
+import ChatSession from '../models/ChatSession.js';
 import { validateRequirement } from '../services/requirementValidator.js';
 
 const router = express.Router();
@@ -10,6 +11,53 @@ import multer from 'multer';
 import FormData from 'form-data';
 
 const upload = multer({ storage: multer.memoryStorage() });
+
+// ============================================
+// PROJECT CHAT SESSION HISTORY
+// ============================================
+router.get('/chat-session/:projectId', async (req, res) => {
+  try {
+    const session = await ChatSession.findOne({
+      projectId: req.params.projectId,
+      userId: req.user._id,
+    });
+
+    res.json({
+      success: true,
+      data: session || {
+        projectId: req.params.projectId,
+        sessionId: `session-${req.params.projectId}-${Date.now()}`,
+        messages: [],
+        pendingRequirements: [],
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/chat-session/:projectId', async (req, res) => {
+  try {
+    const { sessionId, messages = [], pendingRequirements = [], lastTopic = '' } = req.body;
+
+    const session = await ChatSession.findOneAndUpdate(
+      { projectId: req.params.projectId, userId: req.user._id },
+      {
+        projectId: req.params.projectId,
+        userId: req.user._id,
+        sessionId: sessionId || `session-${req.params.projectId}-${Date.now()}`,
+        messages: messages.slice(-100),
+        pendingRequirements,
+        lastTopic,
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    res.json({ success: true, data: session });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // ============================================
 // AI AGENT COLLECTION - Proxy to Python Agent

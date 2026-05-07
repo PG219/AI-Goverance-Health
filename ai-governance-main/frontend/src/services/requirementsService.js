@@ -58,3 +58,20 @@ export const collectRequirements = async (sessionId, messages) => {
   );
   return response.data;
 };
+
+export const getRequirementChatSession = async (projectId) => {
+  const response = await axios.get(
+    `${API_BASE}/requirements/chat-session/${projectId}`,
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
+export const saveRequirementChatSession = async (projectId, data) => {
+  const response = await axios.put(
+    `${API_BASE}/requirements/chat-session/${projectId}`,
+    data,
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
