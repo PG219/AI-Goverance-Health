@@ -1,24 +1,29 @@
 import os
 import json
+import io
+import pandas as pd
 from typing import List, Optional, Dict, Any, TypedDict
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage, AIMessage
+from pypdf import PdfReader
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
+
+# Vertex AI imports
+import vertexai
+from vertexai.generative_models import GenerativeModel, GenerationConfig
 
 load_dotenv()
 
 router = APIRouter()
 
 # ---- Config ----
-MODEL_NAME = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "bionic-mercury-455722-g1")
+LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+MODEL = os.getenv("MODEL", "gemini-2.5-flash-lite")
+vertexai.init(project=PROJECT, location=LOCATION)
 
 # ---- DB Mock / Cache ----
-# In a real app, this would be in MongoDB
 sessions = {}
 
 # ---- LangGraph State ----
@@ -46,7 +51,7 @@ Conversation:
 
 CHAT_PROMPT = """
 You are a Security Consultant helping a user gather requirements for their project.
-Your goal is to be helpful and professional. 
+Your goal is to be helpful and professional.
 Ask one follow-up question at a time to uncover more security needs if necessary.
 If you have enough information, summarize what you've found.
 
@@ -54,22 +59,26 @@ Conversation:
 {history}
 """
 
+# ---- Helper: Call Vertex AI ----
+def call_vertex(prompt: str, temperature: float = 0, max_tokens: int = 1000) -> str:
+    model = GenerativeModel(MODEL)
+    response = model.generate_content(
+        prompt,
+        generation_config=GenerationConfig(temperature=temperature, max_output_tokens=max_tokens)
+    )
+    return response.text.strip()
+
 # ---- Nodes ----
 def extract_requirements(state: CollectionState):
-    llm = ChatOpenAI(model=MODEL_NAME, temperature=0)
     history = "\n".join([f"{m['role']}: {m['content']}" for m in state['messages']])
-    
     prompt = EXTRACTION_PROMPT.format(history=history)
-    res = llm.invoke(prompt)
-    
+
     try:
-        # Clean potential markdown formatting
-        text = res.content.strip()
+        text = call_vertex(prompt, temperature=0)
         if text.startswith("```json"):
             text = text[7:-3].strip()
         elif text.startswith("```"):
             text = text[3:-3].strip()
-        
         reqs = json.loads(text)
         return {"requirements": reqs}
     except Exception as e:
@@ -77,24 +86,24 @@ def extract_requirements(state: CollectionState):
         return {"requirements": []}
 
 def generate_response(state: CollectionState):
-    llm = ChatOpenAI(model=MODEL_NAME, temperature=0.2)
     history = "\n".join([f"{m['role']}: {m['content']}" for m in state['messages']])
-    
     prompt = CHAT_PROMPT.format(history=history)
-    res = llm.invoke(prompt)
-    
-    return {"next_question": res.content}
+
+    try:
+        text = call_vertex(prompt, temperature=0.2)
+        return {"next_question": text}
+    except Exception as e:
+        print(f"Error generating response: {e}")
+        return {"next_question": "Could you provide more details about your security requirements?"}
 
 # ---- Graph Setup ----
 def build_graph():
     graph = StateGraph(CollectionState)
     graph.add_node("extract", extract_requirements)
     graph.add_node("respond", generate_response)
-    
     graph.set_entry_point("extract")
     graph.add_edge("extract", "respond")
     graph.add_edge("respond", END)
-    
     return graph.compile()
 
 _graph = build_graph()
@@ -109,13 +118,6 @@ class CollectionOut(BaseModel):
     requirements: List[Dict[str, Any]]
     answer: str
     finished: bool
-
-import io
-import pandas as pd
-from pypdf import PdfReader
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-
-# ... existing code ...
 
 # ---- Document Parsing Helpers ----
 def extract_text_from_pdf(content: bytes) -> str:
@@ -141,15 +143,6 @@ def extract_text_from_excel(content: bytes) -> str:
 @router.post("/collect", response_model=CollectionOut)
 async def collect_requirements(payload: CollectionIn):
     sid = payload.session_id or "new-session"
-    
-    if not OPENAI_API_KEY:
-        print("[ERROR] OPENAI_API_KEY is missing!")
-        return CollectionOut(
-            session_id=sid,
-            requirements=[],
-            answer="AI not configured. Add OPENAI_API_KEY.",
-            finished=False
-        )
 
     inputs = {
         "messages": payload.messages,
@@ -157,7 +150,7 @@ async def collect_requirements(payload: CollectionIn):
         "next_question": "",
         "finished": False
     }
-    
+
     try:
         result = _graph.invoke(inputs)
         return CollectionOut(
@@ -191,61 +184,41 @@ async def upload_document(
         if not extracted_text.strip():
             raise HTTPException(400, "Could not extract any text from the document.")
 
-        # Build a pseudo-message for extraction
-        dummy_messages = [
-            {"role": "user", "content": f"Analyze this document: {filename}"},
-            {"role": "system", "content": f"Document Content:\n{extracted_text[:15000]}"} # Limit to avoid token issues
-        ]
-
-        # Use the existing extraction node logic
-        llm = ChatOpenAI(model=MODEL_NAME, temperature=0)
-        history = f"DOCUMENT: {filename}\nCONTENT:\n{extracted_text[:10000]}" # Truncated for prompt safety
-        
+        history = f"DOCUMENT: {filename}\nCONTENT:\n{extracted_text[:10000]}"
         prompt = EXTRACTION_PROMPT.format(history=history)
-        res = llm.invoke(prompt)
-        
+
         try:
-            # Handle list or string content from Gemini
-            raw_text = ""
-            if isinstance(res.content, str):
-                raw_text = res.content
-            elif isinstance(res.content, list):
-                for part in res.content:
-                    if isinstance(part, dict) and "text" in part: raw_text += part["text"]
-                    else: raw_text += str(part)
-            
-            text = raw_text.strip()
-            if text.startswith("```json"): text = text[7:-3].strip()
-            elif text.startswith("```"): text = text[3:-3].strip()
-            
-            # Remove any potential trailing/leading non-json chars
+            text = call_vertex(prompt, temperature=0)
+            if text.startswith("```json"):
+                text = text[7:-3].strip()
+            elif text.startswith("```"):
+                text = text[3:-3].strip()
+
             start = text.find("[")
             if start == -1: start = text.find("{")
             end = text.rfind("]")
             if end == -1: end = text.rfind("}")
-            
+
             if start != -1 and end != -1:
                 text = text[start:end+1]
 
             parsed = json.loads(text)
-            
-            # Gemini sometimes returns {"requirements": [...]} or just [...]
+
             reqs = []
             if isinstance(parsed, list):
                 reqs = parsed
             elif isinstance(parsed, dict):
                 reqs = parsed.get("requirements") or parsed.get("data") or parsed.get("items") or []
-            
+
             if not isinstance(reqs, list):
                 reqs = []
 
-            # Label the source
             for r in reqs:
                 if isinstance(r, dict):
                     r["source"] = f"Document: {filename}"
-                
+
             print(f"[SUCCESS] Extracted {len(reqs)} items from {filename}")
-                
+
             return {
                 "success": True,
                 "requirements": reqs,
