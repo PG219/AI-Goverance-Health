@@ -466,3 +466,29 @@ python main.py
 
 install the new requirements
 check the .env file inside agents folder (added google API, Atlassian API key)
+## 3.1.3 Asset Inventory Management
+
+### Overview
+This module provides a centralized system to track, manage, and link all
+organizational assets to their security requirements.
+
+### Files Added
+- `backend/models/Asset.js` - Asset database model
+- `backend/routes/assets.js` - API endpoints
+- `frontend/src/pages/Inventory/main.jsx` - Asset Inventory UI
+- `frontend/src/components/sidebar.jsx` - Added Asset Inventory navigation
+
+### API Endpoints
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/assets` | Get all assets |
+| POST | `/assets` | Create new asset |
+| PUT | `/assets/:id` | Update asset |
+| DELETE | `/assets/:id` | Delete asset |
+| POST | `/assets/:id/link-requirement` | Link requirement to asset |
+
+### How to Access
+1. Run backend: `npm run dev` inside `backend/` folder
+2. Run frontend: `npm run dev` inside `frontend/` folder
+3. Login as admin
+4. Click **Asset Inventory** in the sidebar

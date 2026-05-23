@@ -8,11 +8,11 @@ import {
   Clock,
   Heart,
   HelpCircle,
-  X, // 1. Import the 'X' icon for closing
+  Database,
+  X,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 
-// 2. Accept the 'onToggle' prop from Layout.js
 const Sidebar = ({ open, onToggle }) => {
   const { isAdmin } = useAuth();
 
@@ -21,10 +21,9 @@ const Sidebar = ({ open, onToggle }) => {
       className={`
         h-full bg-slate-800 min-h-screen text-white flex flex-col py-6 shadow-md
         transition-all duration-300 overflow-y-auto
-        ${open ? "px-4" : "px-2"} {/* 3. Adjust padding based on state */}
+        ${open ? "px-4" : "px-2"}
       `}
     >
-      {/* 4. Reworked Logo/Header section */}
       <div
         onClick={onToggle}
         className={`flex items-center mb-8 cursor-pointer hover:opacity-80 transition-opacity ${
@@ -37,7 +36,6 @@ const Sidebar = ({ open, onToggle }) => {
             alt="RAKfort Logo"
             className="w-8 h-8 flex-shrink-0"
           />
-
           <div
             className={`overflow-hidden transition-all ${
               open ? "ml-2 w-auto opacity-100" : "w-0 opacity-0"
@@ -50,7 +48,6 @@ const Sidebar = ({ open, onToggle }) => {
           </div>
         </div>
 
-        {/* 5. Mobile-only Close button */}
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -66,20 +63,14 @@ const Sidebar = ({ open, onToggle }) => {
         <SidebarItem icon={<Play />} label="Demo" to="/demo" open={open} />
         <SidebarItem icon={<Home />} label="Dashboard" to="/" open={open} />
 
-        {/* AI Section */}
         <SidebarItem
           icon={<BarChart3 />}
           label="AI System"
           to="#"
           open={open}
           subItems={[
-            {
-              label: "AI Risk Assessment",
-              to: "/ai-risk-assessment",
-            },
+            { label: "AI Risk Assessment", to: "/ai-risk-assessment" },
             { label: "AI Control Assessment", to: "/ai-control-assessment" },
-            //{ label: "AI Policy", to: "/ai-policy" },
-            //{label: "AI Regulatory Assessment",to: "/ai-regulatory-assessment"},
           ]}
         />
 
@@ -91,18 +82,8 @@ const Sidebar = ({ open, onToggle }) => {
           subItems={[
             { label: "Risk Assessment", to: "/cyber-risk-assessment" },
             { label: "Control Assessment", to: "/cyber-control-assessment" },
-            //{ label: "Risk Analysis", to: "/cyber-risk-analysis" },
           ]}
         />
-
-        {/* <SidebarItem
-          icon={<Users />}
-          label="Third-Party Assessment"
-          to="/3passessements"
-          open={open}
-        /> */}
-
-        {/*<SidebarItem icon={<ChatIcon />} label="Chat" to="/chat" open={open} />*/}
 
         {/* Admin-only section */}
         {isAdmin() && (
@@ -137,6 +118,14 @@ const Sidebar = ({ open, onToggle }) => {
               open={open}
             />
 
+            {/* ✅ YOUR TASK - Asset Inventory (3.1.3) */}
+            <SidebarItem
+              icon={<Database />}
+              label="Asset Inventory"
+              to="/inventory"
+              open={open}
+            />
+
             <SidebarItem
               icon={<Heart />}
               label="Trust Center"
@@ -144,13 +133,12 @@ const Sidebar = ({ open, onToggle }) => {
               open={open}
               subItems={[
                 { label: "Documents", to: "/documents" },
-                //{ label: "Insights", to: "/insights" },
               ]}
             />
           </>
         )}
-        <div className="border-t border-white/20 my-2"></div>
 
+        <div className="border-t border-white/20 my-2"></div>
         <SidebarItem
           icon={<HelpCircle />}
           label="Support"

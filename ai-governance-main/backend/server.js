@@ -11,7 +11,7 @@ import templatesRouter from "./routes/templates.js";
 import templateResponsesRouter from "./routes/templateResponses.js";
 
 import requirementsRouter from "./routes/requirements.js";   // ✅ NEW (Task‑4)
-
+import assetsRouter from "./routes/assets.js";   // ✅ Asset Inventory (3.1.3)
 import riskMatrixRisksRouter from "./routes/riskMatrixRisks.js";
 import questionnaireRouter from "./routes/questionnaire.js";
 import projectRouter from './routes/projects.js';
@@ -59,7 +59,7 @@ app.get('/', (req, res) => {
 // REQUIREMENTS ROUTE (Task‑4) - PUBLIC FOR TESTING
 // ------------------------------
 app.use('/requirements', requirementsRouter);
-
+app.use('/assets', assetsRouter);
 // ------------------------------
 // PROTECTED ROUTES (AUTH + RATE LIMIT)
 // ------------------------------

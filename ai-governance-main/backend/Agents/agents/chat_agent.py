@@ -6,10 +6,7 @@ from pydantic import BaseModel
 from uuid import uuid4
 import os
 import io
-import json
 import shutil
-from uuid import uuid4
-from pathlib import Path
 from typing import List, Optional, TypedDict
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
@@ -32,20 +29,17 @@ SESSIONS_DIR = Path(__file__).parent.parent / "saved_sessions"
 SESSIONS_DIR.mkdir(exist_ok=True)
 
 # ---------------------------------------------------------------------------
-# RAG (Qdrant + Gemini + LangGraph)
+# RAG (Qdrant + Vertex AI + LangGraph)
 # ---------------------------------------------------------------------------
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
-
 
 from langchain_community.vectorstores import Qdrant as LCQdrant
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 
-
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_google_vertexai import VertexAIEmbeddings, ChatVertexAI
 from langchain_core.prompts import ChatPromptTemplate
-
 
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import AIMessage, HumanMessage
@@ -55,17 +49,18 @@ BASE_DIR = Path(__file__).parent.parent
 UPLOADS_DIR = BASE_DIR / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
-
+PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "bionic-mercury-455722-g1")
+LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 QDRANT_PATH = os.getenv("QDRANT_PATH", str(BASE_DIR / "data" / "qdrant_local"))
 COLLECTION_NAME = os.getenv("RAG_COLLECTION", "rag_docs")
 SAMPLE_CORPUS_DIR = Path(os.getenv("SAMPLE_CORPUS_DIR", str(BASE_DIR / "sample_docs")))
-EMBEDDING_MODEL = os.getenv("GEMINI_EMBED_MODEL", "models/text-embedding-004")
-CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
+EMBEDDING_MODEL = os.getenv("VERTEX_EMBED_MODEL", "text-embedding-004")
+CHAT_MODEL = os.getenv("VERTEX_CHAT_MODEL", "gemini-2.5-flash-lite")
 TOP_K = int(os.getenv("RAG_TOP_K", "4"))
 
 # ---- Globals ----
 _qclient: Optional[QdrantClient] = None
-_embeddings: Optional[GoogleGenerativeAIEmbeddings] = None
+_embeddings: Optional[VertexAIEmbeddings] = None
 _vectorstore: Optional[LCQdrant] = None
 _retriever = None
 
@@ -84,7 +79,6 @@ class _History:
             out.append(f"{role}: {m.content}")
         return "\n".join(out)
 
-
 _rag_histories: dict[str, _History] = {}
 
 # ---- Init & helpers ----
@@ -92,8 +86,11 @@ def _ensure_clients():
     global _qclient, _embeddings, _vectorstore, _retriever
 
     if _embeddings is None:
-        # Requires GOOGLE_API_KEY env var
-        _embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
+        _embeddings = VertexAIEmbeddings(
+            model_name=EMBEDDING_MODEL,
+            project=PROJECT,
+            location=LOCATION
+        )
     if _qclient is None:
         if not QDRANT_PATH.startswith("http"):
             Path(QDRANT_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -102,7 +99,6 @@ def _ensure_clients():
             api_key=os.getenv("QDRANT_API_KEY")
         )
 
-    # Ensure collection exists with correct vector size
     dims = len(_embeddings.embed_query("dimension probe"))
     try:
         _qclient.get_collection(COLLECTION_NAME)
@@ -111,8 +107,7 @@ def _ensure_clients():
             collection_name=COLLECTION_NAME,
             vectors_config=VectorParams(size=dims, distance=Distance.COSINE),
         )
-    
-    # Initialize vector store and retriever (moved outside the except block)
+
     if _vectorstore is None:
         try:
             _vectorstore = LCQdrant.from_existing_collection(
@@ -123,8 +118,7 @@ def _ensure_clients():
 
     if _retriever is None:
         _retriever = _vectorstore.as_retriever(search_kwargs={"k": TOP_K})
-    
-    # --- optional Mongo ---
+
     global _mongo, _uploads_col, _chats_col
     if _mongo is None and MONGODB_URI:
         _mongo = MongoClient(MONGODB_URI)
@@ -154,17 +148,14 @@ def _read_file(fp: Path) -> Optional[str]:
         if ext == ".csv":
             df = pd.read_csv(str(fp)).fillna("")
             return df.to_csv(index=False)
-        # Fallback: try text
         return fp.read_text(encoding="utf-8", errors="ignore")
     except Exception:
         return None
-
 
 def _chunk(text: str, source: str) -> List[Document]:
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     docs = splitter.split_text(text)
     return [Document(page_content=d, metadata={"source": source}) for d in docs]
-
 
 def _ingest_paths(paths: List[Path]) -> dict:
     _ensure_clients()
@@ -188,11 +179,9 @@ def _ingest_paths(paths: List[Path]) -> dict:
                 added += 1
             else:
                 skipped += 1
-
     if docs:
         _vectorstore.add_documents(docs)
     return {"files_indexed": added, "files_skipped": skipped, "chunks_added": len(docs)}
-
 
 # ---- LangGraph: retrieve -> generate ----
 class RAGState(TypedDict):
@@ -216,12 +205,17 @@ def _build_graph():
     _ensure_clients()
     global _llm
     if _llm is None:
-        _llm = ChatGoogleGenerativeAI(model=CHAT_MODEL, temperature=0.2)
+        _llm = ChatVertexAI(
+            model_name=CHAT_MODEL,
+            project=PROJECT,
+            location=LOCATION,
+            temperature=0.2
+        )
 
     graph = StateGraph(RAGState)
 
     def retrieve(state: RAGState):
-        docs = _retriever.get_relevant_documents(state["question"])  # type: ignore
+        docs = _retriever.get_relevant_documents(state["question"])
         ctx = []
         sources = []
         for d in docs:
@@ -240,7 +234,6 @@ def _build_graph():
         out = _llm.invoke(msg)
         return {"answer": out.content}
 
-    # Wire nodes
     graph.add_node("retrieve", retrieve)
     graph.add_node("generate", generate)
     graph.set_entry_point("retrieve")
@@ -268,7 +261,6 @@ def rag_health():
     _ensure_clients()
     return {"ok": True, "collection": COLLECTION_NAME, "qdrant_path": QDRANT_PATH}
 
-
 @router.post("/rag/ingest-folder")
 def rag_ingest_folder(payload: RAGIngestFolderIn):
     path = Path(payload.path) if payload.path else SAMPLE_CORPUS_DIR
@@ -276,7 +268,6 @@ def rag_ingest_folder(payload: RAGIngestFolderIn):
         raise HTTPException(404, f"Folder not found: {path}")
     stats = _ingest_paths([path])
     return {"status": "ok", **stats}
-
 
 @router.post("/rag/upload")
 def rag_upload(files: List[UploadFile] = File(...)):
@@ -289,7 +280,6 @@ def rag_upload(files: List[UploadFile] = File(...)):
         with dest.open("wb") as f:
             shutil.copyfileobj(uf.file, f)
         saved_paths.append(dest)
-        # optional: record in Mongo
         if _uploads_col is not None:
             try:
                 _uploads_col.insert_one({
@@ -305,7 +295,6 @@ def rag_upload(files: List[UploadFile] = File(...)):
     stats = _ingest_paths(saved_paths)
     return {"status": "ok", "uploaded": [str(p) for p in saved_paths], **stats}
 
-
 @router.post("/rag/ask", response_model=RAGAskOut)
 def rag_ask(payload: RAGAskIn):
     if not payload.question or not payload.question.strip():
@@ -313,7 +302,6 @@ def rag_ask(payload: RAGAskIn):
 
     sid = payload.session_id or str(uuid4())
     hist = _rag_histories.get(sid) or _History()
-
     hist.add_user(payload.question)
 
     inputs = {
@@ -326,7 +314,7 @@ def rag_ask(payload: RAGAskIn):
     result = _graph.invoke(inputs)
     answer = result.get("answer", "I don't know.")
     sources = result.get("sources", [])
-    # optional: save to Mongo
+
     if _chats_col is not None:
         try:
             _chats_col.insert_one({
@@ -344,10 +332,8 @@ def rag_ask(payload: RAGAskIn):
 
     return RAGAskOut(session_id=sid, answer=answer)
 
-
 @router.get("/rag/list")
 def rag_list_indexed():
     _ensure_clients()
-    # Best-effort: list first N stored payloads by returning collection info only
     info = _qclient.get_collection(COLLECTION_NAME)
     return {"collection": COLLECTION_NAME, "vectors_count": getattr(info, "vectors_count", None)}
