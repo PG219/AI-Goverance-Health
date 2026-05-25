@@ -1,80 +1,44 @@
-import mongoose from 'mongoose';
+const mongoose = require('mongoose');
 
 const assetSchema = new mongoose.Schema({
-  // Identifier
-  id: {
-    type: String,
-    sparse: true,
-    match: /^ASSET-[A-Z]+-[0-9]{3}$/
-  },
-
-  // Basic Information
-  name: {
-    type: String,
-    required: true,
-    minlength: 2,
-    maxlength: 200
-  },
-  description: {
-    type: String,
-    default: ''
-  },
-
-  // Classification
+  name: { type: String, required: true },
   type: {
     type: String,
-    required: true,
-    enum: ['Application', 'API', 'Database', 'Service', 'Infrastructure', 'Other'],
-    default: 'Other'
+    enum: ['model', 'dataset', 'api', 'infrastructure', 'tool', 'other'],
+    default: 'other'
   },
-  criticality: {
-    type: String,
-    enum: ['Critical', 'High', 'Medium', 'Low'],
-    default: 'Medium'
-  },
-  data_classification: {
-    type: String,
-    enum: ['Public', 'Internal', 'Confidential', 'Restricted'],
-    default: 'Internal'
-  },
-
-  // Ownership
-  owner: {
-    type: String,
-    required: true
-  },
-
-  // Technical Details
-  tech_stack: [{ type: String }],
-  dependencies: [{ type: String }],
-
-  // Linked Requirements (connects to your teammate's work)
-  linked_requirements: [{ type: String }],
-
-  // Project Reference
-  projectId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Projects'
-  },
-
-  // Status
+  description: { type: String, default: '' },
   status: {
     type: String,
-    enum: ['Active', 'Inactive', 'Deprecated'],
-    default: 'Active'
+    enum: ['active', 'inactive', 'deprecated'],
+    default: 'active'
+  },
+  owner: { type: String, default: '' },
+  riskLevel: {
+    type: String,
+    enum: ['low', 'medium', 'high', 'critical'],
+    default: 'low'
   },
 
-  // User Reference
-  createdBy: {
+  // Link to a Project
+  project: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    ref: 'Project',
+    default: null
   },
+
+  // Linked security requirements
+  linkedRequirements: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'SecurityRequirement'
+    }
+  ],
+
   updatedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }
-}, {
-  timestamps: true
-});
+}, { timestamps: true });
 
 export default mongoose.model('Asset', assetSchema);
