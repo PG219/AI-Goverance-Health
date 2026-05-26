@@ -122,7 +122,7 @@ const Sidebar = ({ open, onToggle }) => {
             <SidebarItem
               icon={<Database />}
               label="Asset Inventory"
-              to="/inventory"
+              to="/ai-inventory"
               open={open}
             />
 

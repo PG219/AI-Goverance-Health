@@ -16,7 +16,13 @@ import {
 import { Input } from "@/components/ui/input";
 
 const API = "http://localhost:3001";
-const getToken = () => localStorage.getItem("token") || sessionStorage.getItem("token") || "";
+const getToken = () => {
+  const user = localStorage.getItem("user");
+  if (user) {
+    try { return JSON.parse(user).token || ""; } catch { return ""; }
+  }
+  return "";
+};
 const authHeaders = () => ({ "Content-Type": "application/json", "Authorization": `Bearer ${getToken()}` });
 const ASSET_TYPES = ["NLP Model", "ML Model", "Computer Vision", "Speech AI", "Other"];
 const RISK_LEVELS = ["Low", "Medium", "High", "Critical"];
@@ -102,16 +108,16 @@ async function fetchAll() {
     setLoading(true);
     try {
       const [aRes, pRes, rRes] = await Promise.all([
-        fetch(`${API}/assets`, { headers: authHeaders() }),
-        fetch(`${API}/projects`, { headers: authHeaders() }),
-        fetch(`${API}/requirements`, { headers: authHeaders() }),
-      ]);
+  fetch(`${API}/assets`),
+  fetch(`${API}/projects`),
+  fetch(`${API}/requirements`),
+]);
       const aData = await aRes.json();
-      const pData = await pRes.json();
-      const rData = await rRes.json();
-      setAssets(Array.isArray(aData) ? aData : []);
-      setProjects(Array.isArray(pData) ? pData : []);
-      setRequirements(Array.isArray(rData) ? rData : []);
+const pData = await pRes.json();
+const rData = await rRes.json();
+setAssets(Array.isArray(aData) ? aData : Array.isArray(aData?.data) ? aData.data : []);
+setProjects(Array.isArray(pData) ? pData : Array.isArray(pData?.data) ? pData.data : []);
+setRequirements(Array.isArray(rData) ? rData : Array.isArray(rData?.data) ? rData.data : []);
     } catch (e) {
       console.error("Fetch error:", e);
     }
