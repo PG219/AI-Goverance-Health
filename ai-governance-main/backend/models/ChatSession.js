@@ -32,7 +32,9 @@ const pendingRequirementSchema = new mongoose.Schema({
     control: String,
     controlId: String,
   }],
-}, { _id: false });
+  // Collection page sends extra display fields (source, id, complianceMappings).
+  // strict:false keeps them so a pending requirement survives a reload unchanged.
+}, { _id: false, strict: false });
 
 const chatSessionSchema = new mongoose.Schema({
   projectId: {

@@ -117,6 +117,9 @@ export default function RequirementsPage() {
   const [aiSessionId, setAiSessionId] = useState("session-" + Date.now());
   const [aiPendingRequirements, setAiPendingRequirements] = useState([]);
   const [aiSavingPending, setAiSavingPending] = useState(false);
+  // Tracks which project's session has finished loading, so the debounced
+  // save can't overwrite a freshly-selected project with stale state.
+  const loadedProjectRef = useRef(null);
 
   // ── Fetch ──────────────────────────────────────────────────
   const fetchData = async () => {
@@ -152,6 +155,9 @@ export default function RequirementsPage() {
   useEffect(() => {
     if (!selectedProjectId) return;
 
+    // Block saves until this project's session is loaded.
+    loadedProjectRef.current = null;
+
     const loadChatSession = async () => {
       try {
         const response = await getRequirementChatSession(selectedProjectId);
@@ -161,6 +167,8 @@ export default function RequirementsPage() {
         setAiPendingRequirements(session.pendingRequirements || []);
       } catch (err) {
         console.error("Failed to load requirement chat session:", err);
+      } finally {
+        loadedProjectRef.current = selectedProjectId;
       }
     };
 
@@ -169,6 +177,8 @@ export default function RequirementsPage() {
 
   useEffect(() => {
     if (!selectedProjectId) return;
+    // Don't save until the current project's session has loaded.
+    if (loadedProjectRef.current !== selectedProjectId) return;
 
     const timer = setTimeout(() => {
       saveRequirementChatSession(selectedProjectId, {

@@ -9,55 +9,34 @@ import {
   Plus
 } from "lucide-react";
 import axios from "axios";
+import { getProjects } from "../../services/projectService.js";
+import {
+  getRequirementChatSession,
+  saveRequirementChatSession,
+} from "../../services/requirementsService.js";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
 const Collection = () => {
-  const [messages, setMessages] = useState(() => {
-    const saved = localStorage.getItem("pending_messages");
-    try {
-      if (!saved) return [];
-      const parsed = JSON.parse(saved);
-      // CLEANUP: Filter out requirements status, document upload, and error messages from history
-      return parsed.filter(m =>
-        !m.content.includes("Requirement Added!") &&
-        !m.content.includes("Uploaded document:") &&
-        !m.content.includes("Document analysis complete!") &&
-        !m.content.includes("Successfully extracted") &&
-        !m.content.includes("Error analyzing document") &&
-        !m.content.includes("Failed to analyze document") &&
-        !m.content.includes("Extracted") &&
-        !m.content.includes("Confluence is up to date") &&
-        !m.content.includes("I checked Jira") &&
-        !m.content.includes("I've found") &&
-        !m.content.includes("Jira") &&
-        !m.content.includes("Confluence") &&
-        !m.content.includes("MCP") &&
-        !m.content.includes("requirements") &&
-        !m.content.includes("Sorry, I encountered an error")
-      );
-    } catch (e) {
-      return [];
-    }
-  });
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [jiraLoading, setJiraLoading] = useState(false);
   const [confluenceLoading, setConfluenceLoading] = useState(false);
-  const [requirements, setRequirements] = useState(() => {
-    const saved = localStorage.getItem("pending_requirements");
-    try {
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
-  });
+  const [requirements, setRequirements] = useState([]);
   const [existingRequirements, setExistingRequirements] = useState([]);
   const [sessionId, setSessionId] = useState(null);
   const [activeTab, setActiveTab] = useState("chat"); // 'chat', 'docs', 'jira'
   const [showManualModal, setShowManualModal] = useState(false);
   const [manualReq, setManualReq] = useState({ title: "", description: "", category: "Compliance" });
   const chatEndRef = useRef(null);
+
+  // Per-project chat history
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  // Tracks which project's session has finished loading, so the debounced
+  // save below can't overwrite a freshly-selected project with stale state.
+  const loadedProjectRef = useRef(null);
 
   // Fetch already saved requirements to prevent duplicates
   useEffect(() => {
@@ -77,15 +56,68 @@ const Collection = () => {
     fetchExisting();
   }, []);
 
-  // SAVE STAGED REQUIREMENTS TO LOCALSTORAGE
+  // LOAD PROJECTS FOR THE CHAT-HISTORY SELECTOR
   useEffect(() => {
-    localStorage.setItem("pending_requirements", JSON.stringify(requirements));
-  }, [requirements]);
+    const loadProjects = async () => {
+      try {
+        const data = await getProjects();
+        setProjects(data || []);
+        // Default to the first project so a chat is always scoped to one.
+        if (!selectedProjectId && data?.[0]?.projectId) {
+          setSelectedProjectId(data[0].projectId);
+        }
+      } catch (err) {
+        console.error("Failed to load projects for chat history:", err);
+      }
+    };
+    loadProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // SAVE MESSAGES TO LOCALSTORAGE
+  // LOAD THE SELECTED PROJECT'S CHAT SESSION
   useEffect(() => {
-    localStorage.setItem("pending_messages", JSON.stringify(messages));
-  }, [messages]);
+    if (!selectedProjectId) return;
+
+    // Block saves until this project's session is loaded.
+    loadedProjectRef.current = null;
+
+    const loadChatSession = async () => {
+      try {
+        const response = await getRequirementChatSession(selectedProjectId);
+        const session = response.data || {};
+        setSessionId(session.sessionId || `session-${selectedProjectId}-${Date.now()}`);
+        setMessages(session.messages || []);
+        setRequirements(session.pendingRequirements || []);
+      } catch (err) {
+        console.error("Failed to load chat session:", err);
+        setMessages([]);
+        setRequirements([]);
+      } finally {
+        loadedProjectRef.current = selectedProjectId;
+      }
+    };
+
+    loadChatSession();
+  }, [selectedProjectId]);
+
+  // SAVE CHAT + STAGED REQUIREMENTS PER PROJECT (debounced)
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    // Don't save until the current project's session has loaded.
+    if (loadedProjectRef.current !== selectedProjectId) return;
+
+    const timer = setTimeout(() => {
+      const lastUser = [...messages].reverse().find(m => m.role === "user");
+      saveRequirementChatSession(selectedProjectId, {
+        sessionId,
+        messages,
+        pendingRequirements: requirements,
+        lastTopic: lastUser?.content || "",
+      }).catch(err => console.error("Failed to save chat session:", err));
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [selectedProjectId, sessionId, messages, requirements]);
 
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -182,6 +214,7 @@ const Collection = () => {
       const token = localStorage.getItem("token");
       const response = await axios.post(`${API_BASE_URL}/requirements`, {
         id: generatedId,
+        projectId: selectedProjectId || undefined,
         title: req.title.length < 5 ? `${req.title} Project` : req.title,
         description: req.description && req.description.length >= 10 
           ? req.description 
@@ -329,6 +362,27 @@ const Collection = () => {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">AI Requirement Collection</h1>
           <p className="text-sm text-gray-500">Extract, categorize, and map security requirements via multiple channels.</p>
+          <div className="mt-2 flex items-center space-x-2">
+            <label className="text-xs font-semibold text-gray-500">Project:</label>
+            <select
+              value={selectedProjectId}
+              onChange={(e) => setSelectedProjectId(e.target.value)}
+              className="text-sm rounded-lg border-gray-200 bg-white px-3 py-1.5 focus:border-indigo-500 focus:ring-indigo-500"
+            >
+              {projects.length === 0 ? (
+                <option value="">No projects available</option>
+              ) : (
+                <>
+                  <option value="" disabled>Select a project to resume…</option>
+                  {projects.map(project => (
+                    <option key={project.projectId} value={project.projectId}>
+                      {project.projectName} ({project.projectId})
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
+          </div>
         </div>
         <div className="flex space-x-2">
           <button
