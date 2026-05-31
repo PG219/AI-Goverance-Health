@@ -243,3 +243,124 @@ async def upload_document(
     except Exception as exc:
         print(f"Upload Error: {exc}")
         raise HTTPException(500, detail=str(exc))
+
+
+DISCOVERY_PROMPT = """
+You are an AI Governance and Risk Consultant.
+Analyze the following list of compliance/security requirements for an AI project.
+Based on these requirements, identify the AI assets (such as ML models, NLP models, Speech models, datasets, APIs, internal tools, or AI infrastructure) that must exist to satisfy these requirements or are referred to in them.
+
+For each identified asset, provide:
+- name: Clear, descriptive name of the asset (e.g. "Customer Speech-to-Text Model", "Patient Clinical Dataset")
+- type: One of [NLP Model, ML Model, Computer Vision, Speech AI, Other] (map strictly to these categories)
+- description: Detailed explanation of what the asset does and why it was identified from the requirements.
+- riskLevel: Initial estimated risk level, one of [Low, Medium, High, Critical]
+- owner: Suggested owner or team (e.g. "Data Science Team", "Platform Team")
+
+Return the response ONLY as a JSON list of objects.
+
+Requirements:
+{requirements}
+"""
+
+class DiscoveryIn(BaseModel):
+    requirements: List[Dict[str, Any]]
+
+
+@router.post("/discover-assets")
+async def discover_assets(payload: DiscoveryIn):
+    if not GOOGLE_API_KEY:
+        raise HTTPException(status_code=500, detail="AI not configured. Add GOOGLE_API_KEY.")
+    
+    req_texts = []
+    for req in payload.requirements:
+        req_texts.append(f"- [{req.get('id', 'REQ')}] {req.get('title')}: {req.get('description')} (Category: {req.get('category')})")
+    
+    req_summary = "\n".join(req_texts)
+    
+    llm = get_chat_model(temperature=0)
+    prompt = DISCOVERY_PROMPT.format(requirements=req_summary)
+    
+    try:
+        response = llm.invoke(prompt)
+        text = _clean_json_block(_extract_text_response(response.content))
+        assets = json.loads(text)
+        
+        if not isinstance(assets, list):
+            assets = []
+            
+        return {"success": True, "assets": assets}
+    except Exception as exc:
+        print(f"Error discovering assets: {exc}")
+        
+        # --- RESILIENT FALLBACK FOR QUOTA EXHAUSTED OR API FAILURES ---
+        exc_str = str(exc)
+        if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str or "quota" in exc_str.lower():
+            print("[AUTO DISCOVERY] Gemini API Quota Exhausted. Using fallback mock asset discovery...")
+            fallback_assets = []
+            for req in payload.requirements:
+                title = req.get('title', '').lower()
+                desc = req.get('description', '').lower()
+                category = req.get('category', 'Other')
+                
+                if "encrypt" in title or "data protection" in title or "encryption" in title or "crypt" in desc:
+                    fallback_assets.append({
+                        "name": "Data Encryption Service",
+                        "type": "Other",
+                        "description": "Automatically identified to secure and encrypt customer sensitive data.",
+                        "riskLevel": "Medium",
+                        "owner": "Security Team"
+                    })
+                elif "speech" in title or "voice" in title or "speech" in desc:
+                    fallback_assets.append({
+                        "name": "Customer Speech Recognition Engine",
+                        "type": "Speech AI",
+                        "description": "Speech-to-text translation service identified from voice/speech requirements.",
+                        "riskLevel": "Low",
+                        "owner": "AI Platform Team"
+                    })
+                elif "nlp" in title or "language" in title or "text" in title or "chat" in title or "gpt" in desc:
+                    fallback_assets.append({
+                        "name": "Natural Language Processing Engine",
+                        "type": "NLP Model",
+                        "description": "Language model identified from text processing and chat requirements.",
+                        "riskLevel": "Medium",
+                        "owner": "Data Science Team"
+                    })
+                elif "model" in title or "algorithm" in title or "predict" in title or "fraud" in title or "predict" in desc:
+                    fallback_assets.append({
+                        "name": "Fraud Detection Classifier",
+                        "type": "ML Model",
+                        "description": "Predictive classifier identified from core model/fraud requirements.",
+                        "riskLevel": "High",
+                        "owner": "Data Team"
+                    })
+                elif "vision" in title or "image" in title or "camera" in title or "image" in desc:
+                    fallback_assets.append({
+                        "name": "Computer Vision Classifier",
+                        "type": "Computer Vision",
+                        "description": "Image and object detection model identified from vision/image requirements.",
+                        "riskLevel": "Medium",
+                        "owner": "AI Platform Team"
+                    })
+            
+            if not fallback_assets:
+                fallback_assets = [
+                    {
+                        "name": "Core Machine Learning Model",
+                        "type": "ML Model",
+                        "description": "Main prediction model identified from project security requirements.",
+                        "riskLevel": "Medium",
+                        "owner": "Data Science Team"
+                    },
+                    {
+                        "name": "Core Application API",
+                        "type": "Other",
+                        "description": "Application programming interface to deliver ML predictions.",
+                        "riskLevel": "Low",
+                        "owner": "Platform Team"
+                    }
+                ]
+            return {"success": True, "assets": fallback_assets, "message": "Discovered via fallback agent due to API quota limits."}
+            
+        raise HTTPException(status_code=500, detail=str(exc))

@@ -1,6 +1,7 @@
 import axios from "axios";
+import { BACKEND_URL } from "../config/env";
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+const API_BASE = BACKEND_URL;
 
 const getAuthHeaders = () => {
   const token = localStorage.getItem("token");
@@ -9,6 +10,7 @@ const getAuthHeaders = () => {
 
 export const getRequirements = async (filters = {}) => {
   const params = new URLSearchParams();
+  if (filters.projectId) params.append("projectId", filters.projectId);
   if (filters.category) params.append("category", filters.category);
   if (filters.priority) params.append("priority", filters.priority);
   if (filters.status)   params.append("status",   filters.status);

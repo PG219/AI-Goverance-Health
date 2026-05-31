@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { BACKEND_URL } from "@/config/env";
 
-const API = "http://localhost:3001";
+const API = BACKEND_URL;
 
 const ASSET_TYPES = ["model", "dataset", "api", "infrastructure", "tool", "other"];
 const RISK_LEVELS = ["low", "medium", "high", "critical"];

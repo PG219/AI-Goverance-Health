@@ -9,7 +9,24 @@ load_dotenv()
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 
-def get_chat_model(temperature: float = 0.2) -> ChatGoogleGenerativeAI:
+def get_chat_model(temperature: float = 0.2):
+    provider = os.getenv("GENAI_PROVIDER", "gemini").lower()
+    
+    if provider == "vertexai":
+        try:
+            from langchain_google_vertexai import ChatVertexAI
+            project_id = os.getenv("GOOGLE_CLOUD_PROJECT_ID")
+            return ChatVertexAI(
+                model=os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash"),
+                temperature=temperature,
+                project=project_id or None,
+            )
+        except ImportError:
+            raise RuntimeError(
+                "langchain-google-vertexai package is not installed. "
+                "Please run: pip install langchain-google-vertexai"
+            )
+
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY is not set in backend/Agents/.env")

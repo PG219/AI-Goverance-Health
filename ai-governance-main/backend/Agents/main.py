@@ -502,5 +502,5 @@ def libraries_import():
 # --- Run command (for direct execution) ---
 if __name__ == "__main__":
     import uvicorn
-    # Make sure you have the excel files in the same directory to run this
+    # Trigger reload with live Atlassian environment variables
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

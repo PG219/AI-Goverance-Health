@@ -138,12 +138,14 @@ router.get("/type", authenticateToken, async (req, res) => {
     const lowerCaseType = type.toLowerCase();
 
     if (lowerCaseType === "ai") {
-      useCaseTypes = ["AI System", "Third-party AI System"]; // Example types
+      useCaseTypes = ["AI System", "Third-party AI System", "AI", "ai", "AI-System"]; // Expanded types
     } else if (lowerCaseType === "cybersecurity") {
       useCaseTypes = [
         "Cybersecurity Management System",
         "Third-party Cybersecurity",
-      ]; // Example types
+        "Cybersecurity",
+        "cybersecurity"
+      ]; // Expanded types
     } else {
       return res
         .status(400)

@@ -1,10 +1,15 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import axios from 'axios';
 import SecurityRequirement from '../models/SecurityRequirement.js';
 import ChatSession from '../models/ChatSession.js';
+import Asset from '../models/Asset.js';
+import Project from '../models/Projects.js';
 import { validateRequirement } from '../services/requirementValidator.js';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
+router.use(authenticateToken);
 const AGENT_URL = process.env.AGENT_URL || 'http://localhost:8000';
 
 import multer from 'multer';
@@ -185,8 +190,62 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ success: false, errors: validation.errors });
 
     const requirement = new SecurityRequirement(req.body);
-    await requirement.save();
-    res.status(201).json({ success: true, data: requirement });
+    const savedReq = await requirement.save();
+
+    // --- AUTOMATED ASSET DISCOVERY (Non-blocking Background Task) ---
+    if (savedReq.projectId) {
+      // Run asynchronously so it doesn't block the HTTP response returning to the user
+      (async () => {
+        try {
+          // Resolve project to support both ObjectId and custom prefix string
+          let projectDoc = null;
+          if (mongoose.Types.ObjectId.isValid(savedReq.projectId)) {
+            projectDoc = await Project.findById(savedReq.projectId);
+          }
+          if (!projectDoc) {
+            projectDoc = await Project.findOne({ projectId: savedReq.projectId });
+          }
+
+          const projectDbId = projectDoc ? projectDoc._id : null;
+
+          const response = await axios.post(`${AGENT_URL}/agent/collection/discover-assets`, {
+            requirements: [savedReq]
+          });
+          
+          const discovered = response.data.assets || [];
+          for (const ast of discovered) {
+            const exists = await Asset.findOne({
+              name: ast.name,
+              project: projectDbId
+            });
+            
+            if (!exists) {
+              const newAsset = new Asset({
+                name: ast.name,
+                type: ast.type || 'ML Model',
+                description: ast.description || '',
+                status: 'Active',
+                owner: ast.owner || 'Data Team',
+                riskLevel: ast.riskLevel || 'Low',
+                project: projectDbId,
+                linkedRequirements: [savedReq._id]
+              });
+              await newAsset.save();
+              console.log(`[AUTO DISCOVERY] Registered discovered asset: ${ast.name}`);
+            } else {
+              if (!exists.linkedRequirements.includes(savedReq._id)) {
+                exists.linkedRequirements.push(savedReq._id);
+                await exists.save();
+              }
+            }
+          }
+        } catch (discoveryErr) {
+          console.error('[AUTO DISCOVERY ERROR] Failed to discover assets in background:', discoveryErr.message);
+        }
+      })();
+    }
+
+    res.status(201).json({ success: true, data: savedReq });
   } catch (error) {
     if (error.code === 11000)
       return res.status(400).json({ success: false, error: 'Requirement ID already exists' });

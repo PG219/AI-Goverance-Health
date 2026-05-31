@@ -6,25 +6,33 @@ class RiskMatrixService {
    */
   static async storeRisks(data, userId) {
     try {
-      const { projectId, sessionId } = data;
+      const { projectId, sessionId, systemType } = data;
       let { parsedRisks } = data;
 
       if (!parsedRisks || !Array.isArray(parsedRisks) || parsedRisks.length === 0) {
         throw new Error('No risks to store');
       }
       
-      parsedRisks = parsedRisks.slice(1);
+      // Filter out any legacy markdown table headers that bleed in, keeping all valid risk objects
+      const validRisks = parsedRisks.filter(risk => 
+        risk && 
+        risk.risk_name && 
+        !risk.risk_name.toLowerCase().includes("risk name") &&
+        !risk.risk_name.includes("---")
+      );
+
       // Prepare risks for insertion
-      const risksToInsert = parsedRisks.map(risk => ({
+      const risksToInsert = validRisks.map(risk => ({
         sessionId,
         projectId,
-        riskAssessmentId:risk.risk_id,
+        riskAssessmentId: risk.risk_id,
         riskName: risk.risk_name,
         riskOwner: risk.risk_owner,
         severity: risk.severity,
         justification: risk.justification,
         mitigation: risk.mitigation,
         targetDate: risk.target_date ? new Date(risk.target_date) : null,
+        systemType: systemType || "AI System",
         createdBy: userId
       }));
       

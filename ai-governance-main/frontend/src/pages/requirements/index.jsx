@@ -84,6 +84,13 @@ const emptyForm = {
 // ══════════════════════════════════════════════════════════════
 export default function RequirementsPage() {
   const [requirements, setRequirements] = useState([]);
+  const notify = (type, title, message) => {
+    if (window.showNotification) {
+      window.showNotification(type, title, message);
+    } else {
+      alert(`${title ? title + ": " : ""}${message}`);
+    }
+  };
   const [projects, setProjects]         = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [activeMenuId, setActiveMenuId] = useState(null); 
@@ -106,6 +113,7 @@ export default function RequirementsPage() {
 
   // modal
   const [showModal, setShowModal]       = useState(false);
+  const [selectedDetailReq, setSelectedDetailReq] = useState(null);
   const [form, setForm]                 = useState(emptyForm);
   const [formError, setFormError]       = useState("");
   const [saving, setSaving]             = useState(false);
@@ -126,7 +134,7 @@ export default function RequirementsPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await getRequirements();
+      const res = await getRequirements({ projectId: selectedProjectId });
       setRequirements(res.data || []);
     } catch (err) {
       setError("Failed to load requirements.");
@@ -135,7 +143,11 @@ export default function RequirementsPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    if (selectedProjectId) {
+      fetchData();
+    }
+  }, [selectedProjectId]);
 
   useEffect(() => {
     const loadProjects = async () => {
@@ -238,6 +250,7 @@ export default function RequirementsPage() {
     try {
       const payload = {
         ...form,
+        projectId: selectedProjectId,
         acceptance_criteria: form.acceptance_criteria
           ? form.acceptance_criteria.split("\n").filter(Boolean)
           : [],
@@ -268,7 +281,7 @@ export default function RequirementsPage() {
       await updateRequirement(id, { status: newStatus });
       fetchData(); // Refresh list
     } catch (err) {
-      alert(`Failed to update status to ${newStatus}`);
+      notify("error", "Update Failed", `Failed to update status to ${newStatus}`);
     }
   };
 
@@ -279,7 +292,7 @@ export default function RequirementsPage() {
       await deleteRequirement(id);
       fetchData();
     } catch {
-      alert("Failed to delete requirement.");
+      notify("error", "Delete Failed", "Failed to delete requirement.");
     }
   };
 
@@ -695,6 +708,19 @@ export default function RequirementsPage() {
 
             {/* Filters */}
             <div className="flex flex-wrap gap-3 mb-6">
+              <Select value={selectedProjectId} onValueChange={(v) => { setSelectedProjectId(v); setCurrentPage(1); }}>
+                <SelectTrigger className="w-56 font-semibold">
+                  <SelectValue placeholder="Select Project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((p) => (
+                    <SelectItem key={p.projectId || p._id} value={p.projectId || p._id}>
+                      {p.projectName || p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
               <div className="relative flex-1 min-w-[200px] max-w-sm">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground w-4 h-4" />
                 <Input
@@ -752,7 +778,11 @@ export default function RequirementsPage() {
                       <TableCell colSpan={8} className="text-center py-10">No requirements found.</TableCell>
                     </TableRow>
                   ) : paginated.map((req) => (
-                    <TableRow key={req._id}>
+                    <TableRow 
+                      key={req._id}
+                      className="cursor-pointer hover:bg-muted/50 transition-colors"
+                      onClick={() => setSelectedDetailReq(req)}
+                    >
                       <TableCell className="font-mono text-sm font-medium">{req.id}</TableCell>
                       <TableCell className="max-w-[220px]">
                         <p className="font-medium truncate">{req.title}</p>
@@ -782,12 +812,13 @@ export default function RequirementsPage() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="relative">
+                      <TableCell className="relative" onClick={(e) => e.stopPropagation()}>
                         <Button 
                           variant="outline" 
                           size="icon" 
                           className="h-8 w-8 bg-gray-50 border-gray-300"
-                          onClick={() => {
+                          onClick={(e) => {
+                            e.stopPropagation();
                             console.log("Three dots clicked for req:", req._id);
                             setActiveMenuId(activeMenuId === req._id ? null : req._id);
                           }}
@@ -801,6 +832,13 @@ export default function RequirementsPage() {
                             className="absolute right-12 top-0 w-36 bg-white border-2 border-gray-200 shadow-2xl rounded-lg z-[9999] py-2"
                             style={{ minWidth: '150px' }}
                           >
+                            <button
+                              onClick={() => { setSelectedDetailReq(req); setActiveMenuId(null); }}
+                              className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 font-medium"
+                            >
+                              View Details
+                            </button>
+                            <div className="border-t my-1"></div>
                             <button
                               onClick={() => { handleStatusUpdate(req.id, "Approved"); setActiveMenuId(null); }}
                               className="w-full text-left px-4 py-2 text-sm text-green-600 hover:bg-green-50 font-medium"
@@ -863,24 +901,6 @@ export default function RequirementsPage() {
               <p className="text-muted-foreground mb-6">
                 Chat with the AI agent to automatically extract and create security requirements.
               </p>
-
-              <div className="mb-4 max-w-md">
-                <label className="text-sm font-medium mb-1 block">Project chat history</label>
-                <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a project to resume..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {projects.length === 0 ? (
-                      <SelectItem value="no-projects" disabled>No projects available</SelectItem>
-                    ) : projects.map(project => (
-                      <SelectItem key={project.projectId} value={project.projectId}>
-                        {project.projectName} ({project.projectId})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
 
               {/* Chat Messages */}
               <div className="border rounded-lg p-4 bg-muted/30 min-h-[400px] max-h-[500px] overflow-y-auto mb-4">
@@ -1098,6 +1118,95 @@ export default function RequirementsPage() {
               <Button onClick={handleCreate} disabled={saving}>
                 {saving ? "Saving..." : "Save Requirement"}
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* View Requirement Details Modal */}
+        <Dialog open={!!selectedDetailReq} onOpenChange={(open) => !open && setSelectedDetailReq(null)}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <div className="flex items-center gap-2 mb-1">
+                <Badge variant="outline" className="font-mono text-xs">{selectedDetailReq?.id}</Badge>
+                <Badge className={priorityColor(selectedDetailReq?.priority)}>{selectedDetailReq?.priority} Priority</Badge>
+                <Badge className={statusColor(selectedDetailReq?.status)}>{selectedDetailReq?.status}</Badge>
+              </div>
+              <DialogTitle className="text-xl font-bold">
+                {selectedDetailReq?.title}
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-6 py-4">
+              <div>
+                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Description</h4>
+                <p className="text-sm text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-100 dark:border-slate-800 whitespace-pre-wrap">
+                  {selectedDetailReq?.description}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Category</h4>
+                  <Badge variant="outline" className="text-sm font-medium">{selectedDetailReq?.category}</Badge>
+                </div>
+                <div>
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Owner</h4>
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">{selectedDetailReq?.owner || "—"}</p>
+                </div>
+              </div>
+
+              {selectedDetailReq?.compliance_mappings?.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Compliance Mappings</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedDetailReq.compliance_mappings.map((m, i) => (
+                      <Badge key={i} variant="secondary" className="px-2.5 py-1 text-xs">
+                        {m.framework} : {m.control}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selectedDetailReq?.linked_assets?.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Linked Assets</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedDetailReq.linked_assets.map((asset, i) => (
+                      <Badge key={i} className="bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-50 dark:bg-purple-950/30 dark:text-purple-400 dark:border-purple-900">
+                        {asset}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selectedDetailReq?.verification_method && (
+                <div>
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Verification Method</h4>
+                  <p className="text-sm text-slate-700 dark:text-slate-300 bg-indigo-50/50 dark:bg-indigo-950/20 p-3 rounded-lg border border-indigo-100/50 dark:border-indigo-900/30">
+                    {selectedDetailReq.verification_method}
+                  </p>
+                </div>
+              )}
+
+              {selectedDetailReq?.acceptance_criteria?.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Acceptance Criteria</h4>
+                  <ul className="space-y-2">
+                    {selectedDetailReq.acceptance_criteria.map((criterion, idx) => (
+                      <li key={idx} className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-400">
+                        <Check className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                        <span>{criterion}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSelectedDetailReq(null)}>Close</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

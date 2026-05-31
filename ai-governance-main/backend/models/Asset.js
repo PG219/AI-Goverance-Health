@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const assetSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -40,5 +40,44 @@ const assetSchema = new mongoose.Schema({
     ref: 'User'
   }
 }, { timestamps: true });
+
+assetSchema.pre("validate", function (next) {
+  if (this.type) {
+    let t = this.type.toLowerCase().trim();
+    if (t.includes("model") || t.includes("vision") || t.includes("speech") || t.includes("nlp")) {
+      this.type = "model";
+    } else if (t.includes("dataset") || t.includes("data")) {
+      this.type = "dataset";
+    } else if (t.includes("api") || t.includes("service")) {
+      this.type = "api";
+    } else if (t.includes("infra") || t.includes("hardware") || t.includes("cloud")) {
+      this.type = "infrastructure";
+    } else if (t.includes("tool") || t.includes("software")) {
+      this.type = "tool";
+    } else {
+      this.type = "other";
+    }
+  }
+
+  if (this.status) {
+    let s = this.status.toLowerCase().trim();
+    if (s === "active" || s === "inactive" || s === "deprecated") {
+      this.status = s;
+    } else {
+      this.status = "active";
+    }
+  }
+
+  if (this.riskLevel) {
+    let r = this.riskLevel.toLowerCase().trim();
+    if (['low', 'medium', 'high', 'critical'].includes(r)) {
+      this.riskLevel = r;
+    } else {
+      this.riskLevel = "low";
+    }
+  }
+
+  next();
+});
 
 export default mongoose.model('Asset', assetSchema);

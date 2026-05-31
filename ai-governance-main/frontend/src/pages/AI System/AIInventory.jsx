@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { BACKEND_URL } from "@/config/env";
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card";
@@ -11,17 +12,13 @@ import {
 } from "@/components/ui/table";
 import {
   Database, Eye, Plus, Search, Filter, Download,
-  AlertTriangle, CheckCircle, Clock, Settings, X,
+  AlertTriangle, CheckCircle, Clock, Settings, X, Zap, RefreshCw,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
-const API = "http://localhost:3001";
+const API = BACKEND_URL;
 const getToken = () => {
-  const user = localStorage.getItem("user");
-  if (user) {
-    try { return JSON.parse(user).token || ""; } catch { return ""; }
-  }
-  return "";
+  return localStorage.getItem("token") || "";
 };
 const authHeaders = () => ({ "Content-Type": "application/json", "Authorization": `Bearer ${getToken()}` });
 const ASSET_TYPES = ["NLP Model", "ML Model", "Computer Vision", "Speech AI", "Other"];
@@ -35,6 +32,13 @@ const emptyForm = {
 
 const AIInventory = () => {
   const navigate = useNavigate();
+  const notify = (type, title, message) => {
+    if (window.showNotification) {
+      window.showNotification(type, title, message);
+    } else {
+      alert(`${title ? title + ": " : ""}${message}`);
+    }
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const [assets, setAssets] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -45,19 +49,95 @@ const AIInventory = () => {
   const [form, setForm] = useState(emptyForm);
   const [filterProject, setFilterProject] = useState("");
 
+  const [discovering, setDiscovering] = useState(false);
+  const [showDiscoveryModal, setShowDiscoveryModal] = useState(false);
+  const [discoveredAssets, setDiscoveredAssets] = useState([]);
+
   useEffect(() => { fetchAll(); }, []);
+
+  async function handleAiDiscovery() {
+    if (!filterProject) {
+      notify("warning", "Project Required", "Please select a project from the project filter dropdown to run AI Asset Discovery.");
+      return;
+    }
+    setDiscovering(true);
+    try {
+      const response = await fetch(`${API}/assets/discover`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ projectId: filterProject }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        if (data.data.length === 0) {
+          notify("info", "Discovery Complete", data.message || "No new assets discovered from the project requirements.");
+        } else {
+          setDiscoveredAssets(data.data.map(asset => ({ ...asset, selected: true })));
+          setShowDiscoveryModal(true);
+        }
+      } else {
+        notify("error", "Discovery Failed", (data.error || "Failed to discover assets.") + (data.details ? ` Details: ${data.details}` : ""));
+      }
+    } catch (e) {
+      console.error("Discovery error:", e);
+      notify("error", "AI Agent Error", "Error executing AI discovery agent: " + e.message);
+    }
+    setDiscovering(false);
+  }
+
+  async function handleSaveDiscoveredAssets() {
+    const assetsToSave = discoveredAssets.filter(a => a.selected);
+    if (assetsToSave.length === 0) {
+      setShowDiscoveryModal(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await Promise.all(assetsToSave.map(async (asset) => {
+        const payload = {
+          name: asset.name,
+          type: asset.type || "ML Model",
+          description: asset.description || "",
+          status: "Active",
+          owner: asset.owner || "Data Team",
+          riskLevel: asset.riskLevel || "Low",
+          project: filterProject || null,
+          linkedRequirements: []
+        };
+        return fetch(`${API}/assets`, {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify(payload),
+        });
+      }));
+      notify("success", "Registration Success", `Successfully registered ${assetsToSave.length} discovered assets!`);
+      setShowDiscoveryModal(false);
+      fetchAll();
+    } catch (e) {
+      console.error("Save discovered assets error:", e);
+      notify("error", "Save Failed", "Error saving discovered assets.");
+      setLoading(false);
+    }
+  }
 
   async function fetchAll() {
     setLoading(true);
     try {
+      const headers = authHeaders();
       const [aRes, pRes, rRes] = await Promise.all([
-        fetch(`${API}/assets`),
-        fetch(`${API}/projects`),
-        fetch(`${API}/requirements`),
+        fetch(`${API}/assets`, { headers }),
+        fetch(`${API}/projects`, { headers }),
+        fetch(`${API}/requirements`, { headers }),
       ]);
-      if (aRes.ok) setAssets(await aRes.json());
-      if (pRes.ok) setProjects(await pRes.json());
-      if (rRes.ok) setRequirements(await rRes.json());
+      
+      const aData = aRes.ok ? await aRes.json() : [];
+      const pData = pRes.ok ? await pRes.json() : [];
+      const rData = rRes.ok ? await rRes.json() : [];
+
+      setAssets(Array.isArray(aData) ? aData : Array.isArray(aData?.data) ? aData.data : []);
+      setProjects(Array.isArray(pData) ? pData : Array.isArray(pData?.data) ? pData.data : []);
+      setRequirements(Array.isArray(rData) ? rData : Array.isArray(rData?.data) ? rData.data : []);
     } catch (e) {
       console.error("Fetch error:", e);
     }
@@ -93,36 +173,18 @@ const AIInventory = () => {
       if (editingAsset) {
         await fetch(`${API}/assets/${editingAsset._id}`, {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders(),
           body: JSON.stringify(payload),
         });
       } else {
         await fetch(`${API}/assets`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders(),
           body: JSON.stringify(payload),
         });
       }
       setShowModal(false);
-async function fetchAll() {
-    setLoading(true);
-    try {
-      const [aRes, pRes, rRes] = await Promise.all([
-  fetch(`${API}/assets`),
-  fetch(`${API}/projects`),
-  fetch(`${API}/requirements`),
-]);
-      const aData = await aRes.json();
-const pData = await pRes.json();
-const rData = await rRes.json();
-setAssets(Array.isArray(aData) ? aData : Array.isArray(aData?.data) ? aData.data : []);
-setProjects(Array.isArray(pData) ? pData : Array.isArray(pData?.data) ? pData.data : []);
-setRequirements(Array.isArray(rData) ? rData : Array.isArray(rData?.data) ? rData.data : []);
-    } catch (e) {
-      console.error("Fetch error:", e);
-    }
-    setLoading(false);
-  }
+      fetchAll();
     } catch (e) {
       console.error("Save error:", e);
     }
@@ -131,7 +193,10 @@ setRequirements(Array.isArray(rData) ? rData : Array.isArray(rData?.data) ? rDat
   async function handleDelete(e, id) {
     e.stopPropagation();
     if (!confirm("Delete this asset?")) return;
-    await fetch(`${API}/assets/${id}`, { method: "DELETE" });
+    await fetch(`${API}/assets/${id}`, {
+      method: "DELETE",
+      headers: authHeaders()
+    });
     fetchAll();
   }
 
@@ -145,22 +210,37 @@ setRequirements(Array.isArray(rData) ? rData : Array.isArray(rData?.data) ? rDat
   }
 
   const getRiskBadge = (risk) => {
+    const norm = (risk || "Low").toLowerCase().trim();
     const map = {
-      High: "bg-red-100 text-red-800",
-      Critical: "bg-red-200 text-red-900",
-      Medium: "bg-yellow-100 text-yellow-800",
-      Low: "bg-green-100 text-green-800",
+      high: "bg-red-100 text-red-800",
+      critical: "bg-red-200 text-red-900",
+      medium: "bg-yellow-100 text-yellow-800",
+      low: "bg-green-100 text-green-800",
     };
-    return <Badge className={`${map[risk] || "bg-gray-100 text-gray-800"} hover:opacity-80`}>{risk} Risk</Badge>;
+    const labels = {
+      high: "High Risk",
+      critical: "Critical Risk",
+      medium: "Medium Risk",
+      low: "Low Risk",
+    };
+    return <Badge className={`${map[norm] || "bg-gray-100 text-gray-800"} hover:opacity-80`}>{labels[norm] || risk}</Badge>;
   };
 
   const getStatusBadge = (status) => {
+    const norm = (status || "Active").toLowerCase().trim();
     const map = {
-      Active: "bg-green-100 text-green-800",
-      "Under Review": "bg-yellow-100 text-yellow-800",
-      Inactive: "bg-gray-100 text-gray-800",
+      active: "bg-green-100 text-green-800",
+      "under review": "bg-yellow-100 text-yellow-800",
+      inactive: "bg-gray-100 text-gray-800",
+      deprecated: "bg-gray-200 text-gray-800",
     };
-    return <Badge className={`${map[status] || "bg-gray-100 text-gray-800"} hover:opacity-80`}>{status}</Badge>;
+    const labels = {
+      active: "Active",
+      "under review": "Under Review",
+      inactive: "Inactive",
+      deprecated: "Deprecated",
+    };
+    return <Badge className={`${map[norm] || "bg-gray-100 text-gray-800"} hover:opacity-80`}>{labels[norm] || status}</Badge>;
   };
 
   const filteredAssets = assets.filter(a => {
@@ -171,8 +251,12 @@ setRequirements(Array.isArray(rData) ? rData : Array.isArray(rData?.data) ? rDat
     return matchSearch && matchProject;
   });
 
-  const highRiskCount = assets.filter(a => a.riskLevel === "High" || a.riskLevel === "Critical").length;
-  const activeCount = assets.filter(a => a.status === "Active").length;
+  const highRiskCount = assets.filter(a => {
+    const r = (a.riskLevel || "").toLowerCase().trim();
+    return r === "high" || r === "critical";
+  }).length;
+  const activeCount = assets.filter(a => (a.status || "").toLowerCase().trim() === "active").length;
+  const uniqueProjectsLinked = new Set(assets.map(a => a.project?._id || a.project).filter(Boolean)).size;
 
   return (
     <div className="flex-1 min-h-screen bg-background">
@@ -190,6 +274,15 @@ setRequirements(Array.isArray(rData) ? rData : Array.isArray(rData?.data) ? rDat
               </p>
             </div>
             <div className="flex gap-2">
+              <Button 
+                variant="outline" 
+                className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800" 
+                onClick={handleAiDiscovery} 
+                disabled={discovering}
+              >
+                <RefreshCw className={`w-4 h-4 ${discovering ? "animate-spin" : ""}`} />
+                {discovering ? "Discovering..." : "AI Discover Assets"}
+              </Button>
               <Button variant="outline" className="gap-2">
                 <Download className="w-4 h-4" />
                 Export
@@ -264,9 +357,9 @@ setRequirements(Array.isArray(rData) ? rData : Array.isArray(rData?.data) ? rDat
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-purple-600">
-                {assets.filter(a => a.project).length}
+                {uniqueProjectsLinked}
               </div>
-              <p className="text-xs text-muted-foreground">Assets mapped to projects</p>
+              <p className="text-xs text-muted-foreground">Unique projects mapped to assets</p>
             </CardContent>
           </Card>
         </div>
@@ -474,6 +567,119 @@ setRequirements(Array.isArray(rData) ? rData : Array.isArray(rData?.data) ? rDat
                   </Button>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* AI Discovery Preview Modal */}
+      {showDiscoveryModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-background rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto border">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-4">
+                <div>
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    <Zap className="w-5 h-5 text-indigo-600 animate-pulse" />
+                    AI Discovered Assets Preview
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Review and confirm the technical assets identified by AI from your project requirements
+                  </p>
+                </div>
+                <button onClick={() => setShowDiscoveryModal(false)}>
+                  <X className="w-5 h-5 text-muted-foreground" />
+                </button>
+              </div>
+
+              <div className="space-y-4 my-6">
+                {discoveredAssets.map((asset, index) => (
+                  <div 
+                    key={index}
+                    className={`p-4 rounded-xl border transition-all ${
+                      asset.selected 
+                        ? "border-indigo-500 bg-indigo-50/30" 
+                        : "border-gray-200 opacity-60"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-3 w-full">
+                        <input 
+                          type="checkbox"
+                          checked={!!asset.selected}
+                          onChange={() => {
+                            setDiscoveredAssets(prev => prev.map((a, idx) => 
+                              idx === index ? { ...a, selected: !a.selected } : a
+                            ));
+                          }}
+                          className="mt-1.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                        />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <input 
+                              type="text"
+                              value={asset.name}
+                              onChange={(e) => {
+                                setDiscoveredAssets(prev => prev.map((a, idx) => 
+                                  idx === index ? { ...a, name: e.target.value } : a
+                                ));
+                              }}
+                              className="font-bold text-sm bg-transparent border-b border-dashed border-gray-400 focus:border-indigo-600 outline-none w-64"
+                            />
+                            <Badge className="bg-purple-100 text-purple-800 border-none hover:bg-purple-100">
+                              {asset.type}
+                            </Badge>
+                            <Badge className={`${
+                              asset.riskLevel === "High" || asset.riskLevel === "Critical"
+                                ? "bg-red-100 text-red-800"
+                                : asset.riskLevel === "Medium"
+                                ? "bg-yellow-100 text-yellow-800"
+                                : "bg-green-100 text-green-800"
+                            } border-none hover:opacity-80`}>
+                              {asset.riskLevel} Risk
+                            </Badge>
+                          </div>
+                          <textarea
+                            value={asset.description}
+                            rows={2}
+                            onChange={(e) => {
+                              setDiscoveredAssets(prev => prev.map((a, idx) => 
+                                idx === index ? { ...a, description: e.target.value } : a
+                              ));
+                            }}
+                            className="text-xs text-muted-foreground mt-2 w-full bg-transparent border border-transparent hover:border-gray-200 focus:border-indigo-500 focus:bg-white rounded p-1 outline-none resize-none"
+                          />
+                          <div className="flex items-center gap-1 mt-2">
+                            <span className="text-[10px] text-gray-400 font-semibold">Suggested Owner:</span>
+                            <input 
+                              type="text"
+                              value={asset.owner}
+                              onChange={(e) => {
+                                setDiscoveredAssets(prev => prev.map((a, idx) => 
+                                  idx === index ? { ...a, owner: e.target.value } : a
+                                ));
+                              }}
+                              className="text-[10px] text-gray-600 bg-transparent border-b border-dashed border-gray-400 focus:border-indigo-600 outline-none w-32"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4 border-t">
+                <Button type="button" variant="outline" onClick={() => setShowDiscoveryModal(false)}>
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleSaveDiscoveredAssets}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  Confirm and Register Assets ({discoveredAssets.filter(a => a.selected).length})
+                </Button>
+              </div>
             </div>
           </div>
         </div>
