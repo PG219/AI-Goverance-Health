@@ -220,8 +220,11 @@ def vertex_rate_answers(model_name: str, project: str, location: str,
     Returns default rating on error, logs minimal error info.
     """
     try:
-        creds = service_account.Credentials.from_service_account_file("service.json")
-        vertexai_init(project=project, location=location, credentials=creds)
+        if os.path.exists("service.json"):
+            creds = service_account.Credentials.from_service_account_file("service.json")
+            vertexai_init(project=project, location=location, credentials=creds)
+        else:
+            vertexai_init(project=project, location=location)
         model = GenerativeModel(
             model_name,
             system_instruction=Part.from_text(SYSTEM_SCORING_INSTRUCTIONS)

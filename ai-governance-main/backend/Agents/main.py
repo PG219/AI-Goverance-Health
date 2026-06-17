@@ -87,6 +87,9 @@ def _sev_to_int(v: str) -> int:
     }
     return mapping.get(s, 3)
 
+import json
+from agents.llm_provider import invoke_text
+
 def _score_row(text: str, hay: str) -> int:
     """Very simple keyword score: count of overlapping meaningful tokens."""
     if not text or not hay:
@@ -96,9 +99,55 @@ def _score_row(text: str, hay: str) -> int:
     return sum(1 for w in t if w in h)
 
 def _select_relevant_rows_ai(df: pd.DataFrame, summary: str, limit: Optional[int]) -> pd.DataFrame:
-    """Score AI risks by matching summary to name/mitigation."""
+    """Score AI risks using LLM selection, falling back to keyword mapping."""
     if not summary:
         return df if not limit else df.head(limit)
+
+    # Format the risks library for the LLM to choose from
+    risks_list = []
+    name_col = "risk name" if "risk name" in df.columns else ("risk" if "risk" in df.columns else None)
+    if name_col:
+        for idx, r in df.iterrows():
+            risk_id = str(r.get("risk id") or "").strip()
+            if not risk_id:
+                continue
+            name = str(r.get(name_col) or "").strip()
+            mit = str(r.get("mitigation") or "").strip()
+            risks_list.append({"id": risk_id, "name": name, "mitigation": mit})
+
+    system_prompt = (
+        "You are an expert AI risk assessor. Your task is to select the most relevant risks "
+        "from the provided predefined risk library for the project description. "
+        "Analyze the project summary carefully.\n\n"
+        "Return a JSON list containing ONLY the exact Risk IDs (e.g. ['RISK-01', 'RISK-02']) that are relevant. "
+        "Return ONLY the raw JSON array (do not wrap in markdown or backticks)."
+    )
+    user_prompt = f"Predefined Risk Library:\n{json.dumps(risks_list)}\n\nProject Summary:\n{summary}"
+
+    try:
+        llm_response = invoke_text([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ], temperature=0.1)
+
+        clean_res = llm_response.strip().replace("```json", "").replace("```", "").strip()
+        selected_ids = json.loads(clean_res)
+        if isinstance(selected_ids, list):
+            selected_ids = [str(x).strip() for x in selected_ids]
+            matched_indices = []
+            for i, r in df.iterrows():
+                risk_id = str(r.get("risk id") or "").strip()
+                if risk_id in selected_ids:
+                    matched_indices.append(i)
+            if matched_indices:
+                out = df.loc[matched_indices]
+                if limit:
+                    out = out.head(limit)
+                return out
+    except Exception as e:
+        print(f"Error in LLM-based AI risk selection: {e}. Falling back to keyword matching.")
+
+    # Fallback to keyword matching
     scored = []
     for i, r in df.iterrows():
         name = str(r.get("risk name") or r.get("risk") or "")
@@ -113,9 +162,53 @@ def _select_relevant_rows_ai(df: pd.DataFrame, summary: str, limit: Optional[int
     return out
 
 def _select_relevant_rows_cyber(df: pd.DataFrame, summary: str, limit: Optional[int]) -> pd.DataFrame:
-    """Score STRIDE risks by matching summary to description/category/mitigation."""
+    """Score STRIDE risks using LLM selection, falling back to keyword mapping."""
     if not summary:
         return df if not limit else df.head(limit)
+
+    risks_list = []
+    for idx, r in df.iterrows():
+        risk_id = str(r.get("risk id") or "").strip()
+        if not risk_id:
+            continue
+        desc = str(r.get("risk description") or "").strip()
+        cat = str(r.get("category") or "").strip()
+        mit = str(r.get("mitigation") or "").strip()
+        risks_list.append({"id": risk_id, "category": cat, "description": desc, "mitigation": mit})
+
+    system_prompt = (
+        "You are an expert cybersecurity risk assessor. Your task is to select the most relevant risks "
+        "from the provided predefined risk library for the project description. "
+        "Analyze the project summary carefully.\n\n"
+        "Return a JSON list containing ONLY the exact Risk IDs (e.g. ['SR-01', 'SR-02']) that are relevant. "
+        "Return ONLY the raw JSON array (do not wrap in markdown or backticks)."
+    )
+    user_prompt = f"Predefined Risk Library:\n{json.dumps(risks_list)}\n\nProject Summary:\n{summary}"
+
+    try:
+        llm_response = invoke_text([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ], temperature=0.1)
+
+        clean_res = llm_response.strip().replace("```json", "").replace("```", "").strip()
+        selected_ids = json.loads(clean_res)
+        if isinstance(selected_ids, list):
+            selected_ids = [str(x).strip() for x in selected_ids]
+            matched_indices = []
+            for i, r in df.iterrows():
+                risk_id = str(r.get("risk id") or "").strip()
+                if risk_id in selected_ids:
+                    matched_indices.append(i)
+            if matched_indices:
+                out = df.loc[matched_indices]
+                if limit:
+                    out = out.head(limit)
+                return out
+    except Exception as e:
+        print(f"Error in LLM-based Cyber risk selection: {e}. Falling back to keyword matching.")
+
+    # Fallback to keyword matching
     scored = []
     for i, r in df.iterrows():
         desc = str(r.get("risk description") or "")
@@ -141,6 +234,7 @@ class ControlsIn(BaseModel):
     project_id: Optional[str] = None
     risk_assessment_id: str
     risk_ids: Optional[List[str]] = None
+    risks: Optional[List[Dict[str, Any]]] = None
 
 class RiskOutItem(BaseModel):
     risk_id: str
@@ -218,6 +312,60 @@ def ai_risk(payload: RiskIn):
         parsed_risks=out
     )
 
+def _map_controls_llm(risks: List[Dict[str, Any]], df_controls: pd.DataFrame, is_cyber: bool = False) -> Dict[str, List[str]]:
+    # Format the controls list for the LLM
+    controls_list = []
+    if is_cyber:
+        for idx, r in df_controls.iterrows():
+            cid = str(r.get("control id") or "").strip()
+            if not cid:
+                continue
+            name = str(r.get("control name") or "").strip()
+            desc = str(r.get("control description") or "").strip()
+            controls_list.append({"code": cid, "name": name, "description": desc})
+    else:
+        for idx, r in df_controls.iterrows():
+            code = str(r.get("code") or "").strip()
+            if not code:
+                continue
+            name = str(r.get("control") or "").strip()
+            reqs = str(r.get("requirements") or "").strip()
+            controls_list.append({"code": code, "name": name, "description": reqs})
+
+    system_prompt = (
+        "You are an expert AI security control assessor. Your task is to analyze the identified project risks "
+        "and map the most appropriate mitigation controls from the predefined control library to each risk.\n\n"
+        "Predefined Control Library:\n{library_json}\n\n"
+        "Identify which controls are necessary to mitigate each of the identified risks. "
+        "Return a JSON object mapping each Risk ID to a list of applicable Control Codes, e.g.:\n"
+        "{{\n"
+        "  \"R-01\": [\"AC-01\", \"DM-02\"],\n"
+        "  \"R-02\": [\"SC-01\"]\n"
+        "}}\n"
+        "Return ONLY the raw JSON object (do not wrap in markdown or backticks). Do not hallucinate or create any control codes not present in the library."
+    ).replace("{library_json}", json.dumps(controls_list))
+
+    user_prompt = f"Identified Risks:\n{json.dumps(risks)}"
+
+    try:
+        llm_response = invoke_text([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ], temperature=0.1)
+
+        clean_res = llm_response.strip().replace("```json", "").replace("```", "").strip()
+        mapping = json.loads(clean_res)
+        if isinstance(mapping, dict):
+            # Clean and normalize the mapping keys and values
+            cleaned_mapping = {}
+            for r_id, codes in mapping.items():
+                if isinstance(codes, list):
+                    cleaned_mapping[str(r_id).strip()] = [str(c).strip() for c in codes]
+            return cleaned_mapping
+    except Exception as e:
+        print(f"Error in LLM-based control mapping: {e}")
+    return {}
+
 # ---------- AI Controls (Logic from File 1 - Corrected) ----------
 @excel_agent_router.post("/ai/controls", response_model=ControlsResponse, tags=["Excel Agent - AI"])
 def ai_controls(payload: ControlsIn):
@@ -231,36 +379,79 @@ def ai_controls(payload: ControlsIn):
         if c not in df.columns:
             raise HTTPException(500, f"AI controls sheet is missing '{c}' column")
 
-    # rotate through provided risk_ids (if any)
-    rids = [r for r in (payload.risk_ids or []) if r]
-    idx = 0
-
     out: List[ControlOutItem] = []
-    for j, r in df.iterrows():
-        code = (r.get("code") or "").strip()
-        if not code:
-            continue
-        section = (r.get("section") or "").strip()
-        name    = (r.get("control") or "").strip()
-        reqs    = (r.get("requirements") or "").strip()
+    mapped_done = False
 
-        # choose a related risk id, or fallback to assessment id
-        if rids:
-            related = [rids[idx % len(rids)]]
-            idx += 1
-        else:
-            related = [payload.risk_assessment_id]
+    if payload.risks:
+        # Normalize keys in risks payload if needed
+        normalized_risks = []
+        for r in payload.risks:
+            r_id = r.get("risk_id") or r.get("riskAssessmentId")
+            r_name = r.get("risk_name") or r.get("riskName")
+            r_mit = r.get("mitigation")
+            if r_id and r_name:
+                normalized_risks.append({"risk_id": r_id, "risk_name": r_name, "mitigation": r_mit or ""})
+        
+        if normalized_risks:
+            mapping = _map_controls_llm(normalized_risks, df, is_cyber=False)
+            if mapping:
+                controls_by_code = {}
+                for idx, r in df.iterrows():
+                    code = (r.get("code") or "").strip()
+                    if code:
+                        controls_by_code[code] = r
+                
+                control_counter = 1
+                for risk_id, codes in mapping.items():
+                    for code in codes:
+                        if code in controls_by_code:
+                            r = controls_by_code[code]
+                            section = (r.get("section") or "").strip()
+                            name    = (r.get("control") or "").strip()
+                            reqs    = (r.get("requirements") or "").strip()
+                            
+                            out.append(ControlOutItem(
+                                control_id=f"CTRL-{payload.risk_assessment_id}-{control_counter:03d}",
+                                code=code,
+                                section=section,
+                                control=name,
+                                requirements=reqs,
+                                status="Not Implemented",
+                                tickets="None",
+                                relatedRisks=[risk_id]
+                            ))
+                            control_counter += 1
+                if out:
+                    mapped_done = True
 
-        out.append(ControlOutItem(
-            control_id=f"CTRL-{payload.risk_assessment_id}-{j+1:03d}",
-            code=code,
-            section=section,
-            control=name,
-            requirements=reqs,
-            status="Not Implemented",
-            tickets="None",
-            relatedRisks=related
-        ))
+    # Fallback to round-robin mapping if LLM failed or no risks passed
+    if not mapped_done:
+        rids = [r for r in (payload.risk_ids or []) if r]
+        idx = 0
+        for j, r in df.iterrows():
+            code = (r.get("code") or "").strip()
+            if not code:
+                continue
+            section = (r.get("section") or "").strip()
+            name    = (r.get("control") or "").strip()
+            reqs    = (r.get("requirements") or "").strip()
+
+            if rids:
+                related = [rids[idx % len(rids)]]
+                idx += 1
+            else:
+                related = [payload.risk_assessment_id]
+
+            out.append(ControlOutItem(
+                control_id=f"CTRL-{payload.risk_assessment_id}-{j+1:03d}",
+                code=code,
+                section=section,
+                control=name,
+                requirements=reqs,
+                status="Not Implemented",
+                tickets="None",
+                relatedRisks=related
+            ))
 
     return ControlsResponse(
         session_id=payload.session_id,
@@ -323,34 +514,77 @@ def cyber_controls(payload: ControlsIn):
         if c not in df.columns:
             raise HTTPException(500, f"NIST controls sheet is missing '{c}' column")
 
-    rids = [r for r in (payload.risk_ids or []) if r]
-    idx = 0
-
     out: List[ControlOutItem] = []
-    for j, r in df.iterrows():
-        cid   = (r.get("control id") or "").strip()
-        if not cid:
-            continue
-        family = (r.get("family") or "").strip()
-        name   = (r.get("control name") or "").strip()
-        desc   = (r.get("control description") or "").strip()
+    mapped_done = False
 
-        if rids:
-            related = [rids[idx % len(rids)]]
-            idx += 1
-        else:
-            related = [payload.risk_assessment_id]
+    if payload.risks:
+        normalized_risks = []
+        for r in payload.risks:
+            r_id = r.get("risk_id") or r.get("riskAssessmentId")
+            r_name = r.get("risk_name") or r.get("riskName")
+            r_mit = r.get("mitigation")
+            if r_id and r_name:
+                normalized_risks.append({"risk_id": r_id, "risk_name": r_name, "mitigation": r_mit or ""})
+        
+        if normalized_risks:
+            mapping = _map_controls_llm(normalized_risks, df, is_cyber=True)
+            if mapping:
+                controls_by_code = {}
+                for idx, r in df.iterrows():
+                    cid = (r.get("control id") or "").strip()
+                    if cid:
+                        controls_by_code[cid] = r
+                
+                control_counter = 1
+                for risk_id, codes in mapping.items():
+                    for code in codes:
+                        if code in controls_by_code:
+                            r = controls_by_code[code]
+                            family = (r.get("family") or "").strip()
+                            name   = (r.get("control name") or "").strip()
+                            desc   = (r.get("control description") or "").strip()
+                            
+                            out.append(ControlOutItem(
+                                control_id=f"CTRL-{payload.risk_assessment_id}-{control_counter:03d}",
+                                code=code,
+                                section=family,
+                                control=name,
+                                requirements=desc,
+                                status="Not Implemented",
+                                tickets="None",
+                                relatedRisks=[risk_id]
+                            ))
+                            control_counter += 1
+                if out:
+                    mapped_done = True
 
-        out.append(ControlOutItem(
-            control_id=f"CTRL-{payload.risk_assessment_id}-{j+1:03d}",
-            code=cid,
-            section=family,
-            control=name,
-            requirements=desc,
-            status="Not Implemented",
-            tickets="None",
-            relatedRisks=related
-        ))
+    if not mapped_done:
+        rids = [r for r in (payload.risk_ids or []) if r]
+        idx = 0
+        for j, r in df.iterrows():
+            cid   = (r.get("control id") or "").strip()
+            if not cid:
+                continue
+            family = (r.get("family") or "").strip()
+            name   = (r.get("control name") or "").strip()
+            desc   = (r.get("control description") or "").strip()
+
+            if rids:
+                related = [rids[idx % len(rids)]]
+                idx += 1
+            else:
+                related = [payload.risk_assessment_id]
+
+            out.append(ControlOutItem(
+                control_id=f"CTRL-{payload.risk_assessment_id}-{j+1:03d}",
+                code=cid,
+                section=family,
+                control=name,
+                requirements=desc,
+                status="Not Implemented",
+                tickets="None",
+                relatedRisks=related
+            ))
 
     return ControlsResponse(
         session_id=payload.session_id,

@@ -15,11 +15,13 @@ def get_chat_model(temperature: float = 0.2):
     if provider == "vertexai":
         try:
             from langchain_google_vertexai import ChatVertexAI
-            project_id = os.getenv("GOOGLE_CLOUD_PROJECT_ID")
+            project_id = os.getenv("GOOGLE_CLOUD_PROJECT_ID", "bionic-mercury-455722-g1")
+            location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
             return ChatVertexAI(
                 model=os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash"),
                 temperature=temperature,
-                project=project_id or None,
+                project=project_id,
+                location=location,
             )
         except ImportError:
             raise RuntimeError(

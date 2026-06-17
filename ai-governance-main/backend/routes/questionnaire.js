@@ -278,6 +278,7 @@ router.post("/process", authenticateToken, async (req, res) => {
       project_id: String(finalProjectId),
       risk_assessment_id,
       risk_ids: riskIds,
+      risks: parsed_risks,
     };
     let ctrlRes;
     try {
@@ -499,6 +500,7 @@ router.post("/project/:projectId/generate", authenticateToken, async (req, res) 
       project_id: String(projectId),
       risk_assessment_id,
       risk_ids: riskIds,
+      risks: parsed_risks,
     };
     let ctrlRes;
     try {

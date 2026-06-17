@@ -132,3 +132,4 @@ yarl
 zipp
 zstandard
 atlassian-python-api
+langchain-google-vertexai
