@@ -208,9 +208,13 @@ def compile_report_node(state: AssessmentState) -> AssessmentState:
     }
     return state
 
-# --- Vertex / RAG Scoring (Keeps error fallback, minimal error logging) ---
 SYSTEM_SCORING_INSTRUCTIONS = (
-    # ... (instructions remain the same) ...
+    """
+You are an AI governance auditor. Your task is to assess an organization's AI governance maturity based ONLY on the provided policy documents.
+Rate the answer on a scale of 0-4: 0=No evidence, 1=Emerging, 2=Defined, 3=Measured, 4=Optimized.
+Strictly return a JSON list of objects: [{"maturity": int, "rationale": str}]
+The rationale must be concise (<= 60 words) and reference the policy document.
+    """
 ).strip()
 
 def vertex_rate_answers(model_name: str, project: str, location: str,

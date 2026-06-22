@@ -57,6 +57,9 @@ class QuestionnaireService {
       const response = await api.post("/questionnaire/process", data);
       return response.data;
     } catch (error) {
+      if (error.response?.status === 502) {
+        throw new Error("502 Bad Gateway: The LLM service failed to respond.");
+      }
       const e = error.response?.data;
       const msg =
         e?.detail || 

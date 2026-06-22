@@ -14,17 +14,30 @@ const ProjectRisks = ({ projectId }) => {
   ]);
   const [loading, setLoading] = useState(false);
 
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalRisks, setTotalRisks] = useState(0);
+
   useEffect(() => {
     if (projectId) {
-      fetchProjectRisks();
+      fetchProjectRisks(page, limit);
     }
-  }, [projectId]);
+  }, [projectId, page, limit]);
 
-  const fetchProjectRisks = async () => {
+  const fetchProjectRisks = async (currentPage = page, currentLimit = limit) => {
     try {
       setLoading(true);
-      const response = await riskMatrixService.getRisksByProject(projectId);
+      const response = await riskMatrixService.getRisksByProject(projectId, {
+        page: currentPage,
+        limit: currentLimit,
+      });
       const projectRisks = response.risks || [];
+      const total = response.pagination?.total || 0;
+      const pages = response.pagination?.pages || 1;
+
+      setTotalRisks(total);
+      setTotalPages(pages);
 
       // Update risks data
       setRisks(
@@ -51,9 +64,22 @@ const ProjectRisks = ({ projectId }) => {
         }))
       );
 
-      // Calculate risk summary
-      const summary = calculateRiskSummary(projectRisks);
-      setRiskSummary(summary);
+      // Fetch overall project risk stats for the summary bar
+      try {
+        const stats = await riskMatrixService.getRiskStatistics(projectId);
+        const levels = stats.riskLevels || {};
+        setRiskSummary([
+          { label: "Very High", color: "red", count: levels.Critical || 0 },
+          { label: "High", color: "orange", count: levels.High || 0 },
+          { label: "Medium", color: "amber", count: levels.Medium || 0 },
+          { label: "Low", color: "green", count: levels.Low || 0 },
+          { label: "Very Low", color: "teal", count: levels['Very Low'] || 0 },
+        ]);
+      } catch (statsErr) {
+        console.error("Failed to fetch risk stats, falling back to page calculation", statsErr);
+        const summary = calculateRiskSummary(projectRisks);
+        setRiskSummary(summary);
+      }
     } catch (error) {
       console.error("Error fetching project risks:", error);
     } finally {
@@ -297,26 +323,49 @@ const ProjectRisks = ({ projectId }) => {
           <div>
             {loading
               ? "Loading..."
-              : `Showing 1 - ${risks.length} of ${risks.length} project risk(s)`}
+              : `Showing ${totalRisks === 0 ? 0 : (page - 1) * limit + 1} - ${Math.min(page * limit, totalRisks)} of ${totalRisks} project risk(s)`}
           </div>
           <div className="flex items-center gap-2">
             <span>Project risks per page</span>
-            <select className="border rounded px-2 py-1">
-              <option>5</option>
-              <option>10</option>
-              <option>15</option>
+            <select
+              className="border rounded px-2 py-1 cursor-pointer"
+              value={limit}
+              onChange={(e) => {
+                setLimit(parseInt(e.target.value));
+                setPage(1);
+              }}
+            >
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={15}>15</option>
             </select>
-            <span>Page 1 of 1</span>
-            <button disabled className="text-gray-300 px-1">
+            <span>Page {page} of {totalPages}</span>
+            <button
+              disabled={page === 1 || loading}
+              onClick={() => setPage(1)}
+              className={`${page === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-black cursor-pointer'} px-1 font-semibold`}
+            >
               &lt;&lt;
             </button>
-            <button disabled className="text-gray-300 px-1">
+            <button
+              disabled={page === 1 || loading}
+              onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
+              className={`${page === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-black cursor-pointer'} px-1 font-semibold`}
+            >
               &lt;
             </button>
-            <button disabled className="text-gray-300 px-1">
+            <button
+              disabled={page === totalPages || loading}
+              onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
+              className={`${page === totalPages ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-black cursor-pointer'} px-1 font-semibold`}
+            >
               &gt;
             </button>
-            <button disabled className="text-gray-300 px-1">
+            <button
+              disabled={page === totalPages || loading}
+              onClick={() => setPage(totalPages)}
+              className={`${page === totalPages ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-black cursor-pointer'} px-1 font-semibold`}
+            >
               &gt;&gt;
             </button>
           </div>

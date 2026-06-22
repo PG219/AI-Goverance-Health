@@ -9,6 +9,7 @@ import axios from "axios";
 import Template from "../models/Template.js";
 import Question from "../models/Question.js";
 import RiskMatrixRisk from "../models/Risks.js";
+import ControlAssessment from "../models/ControlAssessment.js";
 import Asset from "../models/Asset.js";
 import SecurityRequirement from "../models/SecurityRequirement.js";
 
@@ -260,6 +261,11 @@ router.post("/process", authenticateToken, async (req, res) => {
       risksCount: 0,
       risks: [],
     };
+
+    // Clean up existing risks and controls for this project first to prevent duplicate accumulation
+    await RiskMatrixRisk.deleteMany({ projectId: finalProjectId });
+    await ControlAssessment.deleteMany({ projectId: finalProjectId });
+
     if (Array.isArray(parsed_risks) && parsed_risks.length) {
       risksResult = await RiskMatrixService.storeRisks(
         { projectId: finalProjectId, sessionId, parsedRisks: parsed_risks, systemType: family === "ai" ? "AI System" : "Cybersecurity" },
@@ -483,6 +489,11 @@ router.post("/project/:projectId/generate", authenticateToken, async (req, res) 
       risksCount: 0,
       risks: [],
     };
+
+    // Clean up existing risks and controls for this project first to prevent duplicate accumulation
+    await RiskMatrixRisk.deleteMany({ projectId });
+    await ControlAssessment.deleteMany({ projectId });
+
     if (Array.isArray(parsed_risks) && parsed_risks.length) {
       risksResult = await RiskMatrixService.storeRisks(
         { projectId, sessionId, parsedRisks: parsed_risks, systemType: family === "ai" ? "AI System" : "Cybersecurity" },

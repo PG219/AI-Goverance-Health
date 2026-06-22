@@ -102,7 +102,7 @@ class RiskMatrixService {
         query.severity = parseInt(severity);
       }
       const skip = (parseInt(page) - 1) * parseInt(limit);
-      const risks = await RiskMatrixRisk.find({projectId})
+      const risks = await RiskMatrixRisk.find(query)
         .populate('createdBy', 'name surname email')
         .sort({ severity: -1, createdAt: -1 })
         .skip(skip)
