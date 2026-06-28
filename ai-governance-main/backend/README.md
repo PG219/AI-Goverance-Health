@@ -469,12 +469,12 @@ check the .env file inside agents folder (added google API, Atlassian API key)
 ## 3.1.3 Asset Inventory Management
 
 ### Overview
-This module provides a centralized system to track, manage, and link all 
+This module provides a centralized system to track, manage, and link all
 organizational assets to their security requirements.
 
 ### Files Added
 - `backend/models/Asset.js` - Asset database model
-- `backend/routes/assets.js` - API endpoints  
+- `backend/routes/assets.js` - API endpoints
 - `frontend/src/pages/Inventory/main.jsx` - Asset Inventory UI
 - `frontend/src/components/sidebar.jsx` - Added Asset Inventory navigation
 

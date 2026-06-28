@@ -179,11 +179,27 @@ def initialize_rag_service():
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
         
-    if not GOOGLE_API_KEY:
-        raise RuntimeError("GOOGLE_API_KEY is not set.")
-    
-    embeddings = GoogleGenerativeAIEmbeddings(model=GEMINI_EMBED_MODEL)
-    llm = ChatGoogleGenerativeAI(model=GEMINI_CHAT_MODEL, temperature=0.2)
+    provider = os.getenv("GENAI_PROVIDER", "gemini").lower()
+    if provider == "vertexai":
+        from langchain_google_vertexai import VertexAIEmbeddings, ChatVertexAI
+        project_id = os.getenv("GOOGLE_CLOUD_PROJECT_ID", "bionic-mercury-455722-g1")
+        location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+        embeddings = VertexAIEmbeddings(
+            model_name=GEMINI_EMBED_MODEL,
+            project=project_id,
+            location=location
+        )
+        llm = ChatVertexAI(
+            model_name=GEMINI_CHAT_MODEL,
+            project=project_id,
+            location=location,
+            temperature=0.2
+        )
+    else:
+        if not GOOGLE_API_KEY:
+            raise RuntimeError("GOOGLE_API_KEY is not set.")
+        embeddings = GoogleGenerativeAIEmbeddings(model=GEMINI_EMBED_MODEL)
+        llm = ChatGoogleGenerativeAI(model=GEMINI_CHAT_MODEL, temperature=0.2)
     
     Path(QDRANT_PATH).mkdir(parents=True, exist_ok=True)
     qclient = QdrantClient(path=QDRANT_PATH)

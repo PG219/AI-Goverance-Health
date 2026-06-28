@@ -34,8 +34,21 @@ const app = express();
 connectDB();
 
 // CORS configuration
+// In development, Vite may pick any local port (5173, 5174, ...), so allow any
+// localhost/127.0.0.1 origin. In production, restrict to FRONTEND_URL.
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || '*',
+  origin: (origin, callback) => {
+    // Allow non-browser clients (curl, server-to-server) with no Origin header
+    if (!origin) return callback(null, true);
+    if (process.env.NODE_ENV !== 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
+    if (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL) {
+      return callback(null, true);
+    }
+    if (!process.env.FRONTEND_URL) return callback(null, true);
+    return callback(new Error(`Not allowed by CORS: ${origin}`));
+  },
   credentials: true,
   optionsSuccessStatus: 200
 };
@@ -92,5 +105,5 @@ app.use('/video', videoRouter);
 const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT} (Reloaded with Atlassian Config)`);
 });

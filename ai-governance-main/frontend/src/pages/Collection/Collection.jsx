@@ -9,55 +9,61 @@ import {
   Plus
 } from "lucide-react";
 import axios from "axios";
+import { getProjects } from "../../services/projectService.js";
+import {
+  getRequirementChatSession,
+  saveRequirementChatSession,
+} from "../../services/requirementsService.js";
+import { BACKEND_URL } from "../../config/env";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
+const API_BASE_URL = BACKEND_URL;
 
 const Collection = () => {
-  const [messages, setMessages] = useState(() => {
-    const saved = localStorage.getItem("pending_messages");
-    try {
-      if (!saved) return [];
-      const parsed = JSON.parse(saved);
-      // CLEANUP: Filter out requirements status, document upload, and error messages from history
-      return parsed.filter(m =>
-        !m.content.includes("Requirement Added!") &&
-        !m.content.includes("Uploaded document:") &&
-        !m.content.includes("Document analysis complete!") &&
-        !m.content.includes("Successfully extracted") &&
-        !m.content.includes("Error analyzing document") &&
-        !m.content.includes("Failed to analyze document") &&
-        !m.content.includes("Extracted") &&
-        !m.content.includes("Confluence is up to date") &&
-        !m.content.includes("I checked Jira") &&
-        !m.content.includes("I've found") &&
-        !m.content.includes("Jira") &&
-        !m.content.includes("Confluence") &&
-        !m.content.includes("MCP") &&
-        !m.content.includes("requirements") &&
-        !m.content.includes("Sorry, I encountered an error")
-      );
-    } catch (e) {
-      return [];
-    }
-  });
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [jiraLoading, setJiraLoading] = useState(false);
   const [confluenceLoading, setConfluenceLoading] = useState(false);
-  const [requirements, setRequirements] = useState(() => {
-    const saved = localStorage.getItem("pending_requirements");
-    try {
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
-  });
+  const [requirements, setRequirements] = useState([]);
   const [existingRequirements, setExistingRequirements] = useState([]);
   const [sessionId, setSessionId] = useState(null);
   const [activeTab, setActiveTab] = useState("chat"); // 'chat', 'docs', 'jira'
   const [showManualModal, setShowManualModal] = useState(false);
   const [manualReq, setManualReq] = useState({ title: "", description: "", category: "Compliance" });
+  
+  // Add/Confirm Requirement Modal state variables
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingReq, setEditingReq] = useState(null);
+  const [requirementForm, setRequirementForm] = useState({
+    id: "",
+    title: "",
+    description: "",
+    category: "Compliance",
+    priority: "High",
+    status: "Draft",
+    owner: "",
+    verification_method: "",
+    acceptance_criteria: "",
+    complianceMappings: [],
+  });
+
+  const notify = (type, title, message) => {
+    if (window.showNotification) {
+      window.showNotification(type, title, message);
+    } else {
+      alert(`${title ? title + ": " : ""}${message}`);
+    }
+  };
+
   const chatEndRef = useRef(null);
+
+  // Per-project chat history
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  // Tracks which project's session has finished loading, so the debounced
+  // save below can't overwrite a freshly-selected project with stale state.
+  const loadedProjectRef = useRef(null);
 
   // Fetch already saved requirements to prevent duplicates
   useEffect(() => {
@@ -77,15 +83,68 @@ const Collection = () => {
     fetchExisting();
   }, []);
 
-  // SAVE STAGED REQUIREMENTS TO LOCALSTORAGE
+  // LOAD PROJECTS FOR THE CHAT-HISTORY SELECTOR
   useEffect(() => {
-    localStorage.setItem("pending_requirements", JSON.stringify(requirements));
-  }, [requirements]);
+    const loadProjects = async () => {
+      try {
+        const data = await getProjects();
+        setProjects(data || []);
+        // Default to the first project so a chat is always scoped to one.
+        if (!selectedProjectId && data?.[0]?.projectId) {
+          setSelectedProjectId(data[0].projectId);
+        }
+      } catch (err) {
+        console.error("Failed to load projects for chat history:", err);
+      }
+    };
+    loadProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // SAVE MESSAGES TO LOCALSTORAGE
+  // LOAD THE SELECTED PROJECT'S CHAT SESSION
   useEffect(() => {
-    localStorage.setItem("pending_messages", JSON.stringify(messages));
-  }, [messages]);
+    if (!selectedProjectId) return;
+
+    // Block saves until this project's session is loaded.
+    loadedProjectRef.current = null;
+
+    const loadChatSession = async () => {
+      try {
+        const response = await getRequirementChatSession(selectedProjectId);
+        const session = response.data || {};
+        setSessionId(session.sessionId || `session-${selectedProjectId}-${Date.now()}`);
+        setMessages(session.messages || []);
+        setRequirements(session.pendingRequirements || []);
+      } catch (err) {
+        console.error("Failed to load chat session:", err);
+        setMessages([]);
+        setRequirements([]);
+      } finally {
+        loadedProjectRef.current = selectedProjectId;
+      }
+    };
+
+    loadChatSession();
+  }, [selectedProjectId]);
+
+  // SAVE CHAT + STAGED REQUIREMENTS PER PROJECT (debounced)
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    // Don't save until the current project's session has loaded.
+    if (loadedProjectRef.current !== selectedProjectId) return;
+
+    const timer = setTimeout(() => {
+      const lastUser = [...messages].reverse().find(m => m.role === "user");
+      saveRequirementChatSession(selectedProjectId, {
+        sessionId,
+        messages,
+        pendingRequirements: requirements,
+        lastTopic: lastUser?.content || "",
+      }).catch(err => console.error("Failed to save chat session:", err));
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [selectedProjectId, sessionId, messages, requirements]);
 
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -131,7 +190,7 @@ const Collection = () => {
   const handleManualSubmit = (e) => {
     e.preventDefault();
     if (!manualReq.title || !manualReq.description) {
-      alert("Please provide both a title and description.");
+      notify("warning", "Missing Information", "Please provide both a title and description.");
       return;
     }
 
@@ -158,17 +217,51 @@ const Collection = () => {
     setRequirements(prev => prev.filter(item => item.title !== title));
   };
 
-  const saveRequirement = async (req) => {
+  const saveRequirement = (req) => {
+    // Generate a valid ID format: REQ-2026-001
+    const year = new Date().getFullYear();
+    const randomNum = Math.floor(100 + Math.random() * 900); // 100-999
+    const generatedId = `REQ-${year}-${randomNum}`;
+
+    // Normalize category: if the source provides an invalid category, fall back to "Other"
+    const rawCategory = req.category || "Compliance";
+    const safeCategory = VALID_CATEGORIES.includes(rawCategory) ? rawCategory : "Other";
+
+    // Normalize priority to capitalized format (e.g. "high" -> "High")
+    const rawPriority = req.priority || "High";
+    const normalizedPriority = rawPriority.charAt(0).toUpperCase() + rawPriority.slice(1).toLowerCase();
+    const safePriority = ["Critical", "High", "Medium", "Low"].includes(normalizedPriority) ? normalizedPriority : "High";
+
+    setEditingReq(req);
+    setRequirementForm({
+      id: generatedId,
+      title: req.title.length < 5 ? `${req.title} Project` : req.title,
+      description: req.description && req.description.length >= 10 
+        ? req.description 
+        : `Requirement extracted from ${req.source || "external source"}. See ${req.title} for more details.`,
+      category: safeCategory,
+      priority: safePriority,
+      status: "Draft",
+      owner: req.owner || "",
+      verification_method: req.verification_method || "",
+      acceptance_criteria: Array.isArray(req.acceptance_criteria)
+        ? req.acceptance_criteria.join("\n")
+        : req.acceptance_criteria || "",
+      complianceMappings: req.complianceMappings || [],
+    });
+    setShowAddModal(true);
+  };
+
+  const handleConfirmSave = async (e) => {
+    e.preventDefault();
+    if (saving) return;
+    if (!requirementForm.title || !requirementForm.description) {
+      notify("warning", "Missing Information", "Please provide both a title and description.");
+      return;
+    }
+
+    setSaving(true);
     try {
-      // Generate a valid ID format: REQ-2026-001
-      const year = new Date().getFullYear();
-      const randomNum = Math.floor(100 + Math.random() * 900); // 100-999
-      const generatedId = `REQ-${year}-${randomNum}`;
-
-      // Normalize category: if the source provides an invalid category, fall back to "Other"
-      const rawCategory = req.category || "Compliance";
-      const safeCategory = VALID_CATEGORIES.includes(rawCategory) ? rawCategory : "Other";
-
       // Determine valid source type for DB schema
       const getSourceType = (src = "") => {
         const s = src.toLowerCase();
@@ -179,42 +272,67 @@ const Collection = () => {
         return "manual";
       };
 
+      const rawFormPriority = requirementForm.priority || "High";
+      const normalizedFormPriority = rawFormPriority.charAt(0).toUpperCase() + rawFormPriority.slice(1).toLowerCase();
+      const safeFormPriority = ["Critical", "High", "Medium", "Low"].includes(normalizedFormPriority) ? normalizedFormPriority : "High";
+
       const token = localStorage.getItem("token");
       const response = await axios.post(`${API_BASE_URL}/requirements`, {
-        id: generatedId,
-        title: req.title.length < 5 ? `${req.title} Project` : req.title,
-        description: req.description && req.description.length >= 10 
-          ? req.description 
-          : `Requirement extracted from ${req.source || "external source"}. See ${req.title} for more details.`,
-        category: safeCategory,
-        priority: req.priority || "High",
-        status: "Draft",
+        id: requirementForm.id,
+        projectId: selectedProjectId || undefined,
+        title: requirementForm.title,
+        description: requirementForm.description,
+        category: requirementForm.category,
+        priority: safeFormPriority,
+        status: requirementForm.status,
+        owner: requirementForm.owner,
+        verification_method: requirementForm.verification_method,
+        acceptance_criteria: requirementForm.acceptance_criteria
+          ? requirementForm.acceptance_criteria.split("\n").filter(c => c.trim())
+          : [],
+        complianceMappings: requirementForm.complianceMappings,
         source: {
-          type: getSourceType(req.source || activeTab),
+          type: getSourceType(editingReq?.source || activeTab),
           timestamp: new Date(),
-          reference: req.source || ""
+          reference: editingReq?.source || ""
         }
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
       if (response.data.success || response.data._id) {
-        setRequirements(prev => prev.filter(item => item.title !== req.title));
-        setExistingRequirements(prev => [...prev, req.title]);
-        alert(`Requirement Added successfully with ID: ${generatedId}`);
+        // Remove from staging requirements list
+        if (editingReq) {
+          setRequirements(prev => prev.filter(item => item.title !== editingReq.title));
+          setExistingRequirements(prev => [...prev, editingReq.title]);
+        }
+        setShowAddModal(false);
+        notify("success", "Requirement Saved", `Requirement Added successfully with ID: ${requirementForm.id}`);
       }
     } catch (error) {
       console.error("Error saving requirement:", error);
       const errorMessage = error.response?.data?.error || error.response?.data?.errors?.join(", ") || error.message;
-      alert(`Failed to save: ${errorMessage}`);
+      notify("error", "Failed to Save", errorMessage);
+    } finally {
+      setSaving(false);
     }
   };
+
+  const [confluenceUrl, setConfluenceUrl] = useState("");
+  const [confluencePageId, setConfluencePageId] = useState("");
+  const [jiraUrl, setJiraUrl] = useState("");
 
   const fetchFromJira = async () => {
     setJiraLoading(true);
     try {
       const token = localStorage.getItem("token");
-      const response = await axios.get(`${API_BASE_URL}/requirements/jira`, {
+      let url = `${API_BASE_URL}/requirements/jira`;
+      const params = [];
+      if (jiraUrl) params.push(`url=${encodeURIComponent(jiraUrl)}`);
+      if (selectedProjectId) params.push(`projectId=${encodeURIComponent(selectedProjectId)}`);
+      if (params.length > 0) url += `?${params.join("&")}`;
+
+      const response = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (response.data.success) {
@@ -223,14 +341,14 @@ const Collection = () => {
         setRequirements(prev => [...prev, ...newItems]);
 
         if (newItems.length > 0) {
-          alert(`Successfully extracted ${newItems.length} new requirements from Jira.`);
+          notify("success", "Jira Sync Successful", `Successfully extracted ${newItems.length} new requirements from Jira.`);
         } else {
-          alert("Jira is already up to date.");
+          notify("info", "Jira Up to Date", "Jira is already up to date.");
         }
       }
     } catch (error) {
       console.error("Jira fetch error:", error);
-      alert("Failed to connect to Jira. Please check your credentials.");
+      notify("error", "Jira Connection Failed", "Failed to connect to Jira. Please check your credentials.");
     } finally {
       setJiraLoading(false);
     }
@@ -240,7 +358,16 @@ const Collection = () => {
     setConfluenceLoading(true);
     try {
       const token = localStorage.getItem("token");
-      const url = `${API_BASE_URL}/requirements/confluence?query=requirements`;
+      let url = `${API_BASE_URL}/requirements/confluence?query=requirements`;
+      if (confluencePageId) {
+        url += `&page_id=${encodeURIComponent(confluencePageId)}`;
+      }
+      if (confluenceUrl) {
+        url += `&url=${encodeURIComponent(confluenceUrl)}`;
+      }
+      if (selectedProjectId) {
+        url += `&projectId=${encodeURIComponent(selectedProjectId)}`;
+      }
 
       const response = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` }
@@ -250,7 +377,7 @@ const Collection = () => {
         const extractedReqs = response.data.data || [];
 
         if (extractedReqs.length === 0) {
-          alert("I checked Confluence but couldn't find any new requirements. Please ensure your project documentation is available.");
+          notify("warning", "No Requirements Found", "I checked Confluence but couldn't find any new requirements. Please ensure your project documentation is available.");
           return;
         }
 
@@ -259,14 +386,14 @@ const Collection = () => {
         setRequirements(prev => [...prev, ...newItems]);
 
         if (newItems.length > 0) {
-          alert(`Successfully extracted ${newItems.length} new requirements from Confluence.`);
+          notify("success", "Confluence Sync Successful", `Successfully extracted ${newItems.length} new requirements from Confluence.`);
         } else {
-          alert("Confluence is already up to date.");
+          notify("info", "Confluence Up to Date", "Confluence is already up to date.");
         }
       }
     } catch (error) {
       console.error("Confluence fetch error:", error);
-      alert("Failed to connect to Confluence MCP. Please check your credentials.");
+      notify("error", "Confluence Sync Failed", "Failed to connect to Confluence MCP. Please check your credentials.");
     } finally {
       setConfluenceLoading(false);
     }
@@ -304,11 +431,11 @@ const Collection = () => {
           
           if (filteredReqs.length > 0) {
             setRequirements(prev => [...prev, ...filteredReqs]);
-            alert(`Successfully extracted ${filteredReqs.length} new requirements from document.`);
+            notify("success", "File Upload Success", `Successfully extracted ${filteredReqs.length} new requirements from document.`);
           } else if (newReqs.length > 0) {
-            alert("No new requirements found. All items in the document are already in your list.");
+            notify("info", "Already Imported", "No new requirements found. All items in the document are already in your list.");
           } else {
-            alert("Document analyzed, but no security requirements were found inside.");
+            notify("warning", "Empty Source", "Document analyzed, but no security requirements were found inside.");
           }
         }
       }
@@ -329,6 +456,27 @@ const Collection = () => {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">AI Requirement Collection</h1>
           <p className="text-sm text-gray-500">Extract, categorize, and map security requirements via multiple channels.</p>
+          <div className="mt-2 flex items-center space-x-2">
+            <label className="text-xs font-semibold text-gray-500">Project:</label>
+            <select
+              value={selectedProjectId}
+              onChange={(e) => setSelectedProjectId(e.target.value)}
+              className="text-sm rounded-lg border-gray-200 bg-white px-3 py-1.5 focus:border-indigo-500 focus:ring-indigo-500"
+            >
+              {projects.length === 0 ? (
+                <option value="">No projects available</option>
+              ) : (
+                <>
+                  <option value="" disabled>Select a project to resume…</option>
+                  {projects.map(project => (
+                    <option key={project.projectId} value={project.projectId}>
+                      {project.projectName} ({project.projectId})
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
+          </div>
         </div>
         <div className="flex space-x-2">
           <button
@@ -449,28 +597,63 @@ const Collection = () => {
             <div className="flex-1 p-8 space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <div
-                  onClick={fetchFromJira}
-                  className="p-6 border rounded-2xl bg-white hover:border-indigo-500 transition-all cursor-pointer group"
+                  className="p-6 border rounded-2xl bg-white hover:border-indigo-500 transition-all group relative"
                 >
                   <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center mb-4 text-blue-600 group-hover:scale-110 transition-transform">
                     {jiraLoading ? <RefreshCw className="w-6 h-6 animate-spin" /> : <CloudDownload className="w-6 h-6" />}
                   </div>
                   <h3 className="font-bold text-gray-900">JIRA Integration</h3>
                   <p className="text-xs text-gray-500 mt-1">Import requirements directly from JIRA tickets & epics.</p>
-                  <button className="mt-4 text-xs font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-50" disabled={jiraLoading}>
+                  
+                  <div className="mt-4 space-y-2" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="text"
+                      placeholder="Jira Ticket URL or Epic Link"
+                      value={jiraUrl}
+                      onChange={(e) => setJiraUrl(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs rounded-lg border-gray-200 focus:border-indigo-500 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); fetchFromJira(); }}
+                    className="mt-4 w-full px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 shadow-sm transition-all" 
+                    disabled={jiraLoading}
+                  >
                     {jiraLoading ? "Syncing..." : "Sync Now →"}
                   </button>
                 </div>
                 <div
-                  onClick={fetchFromConfluence}
-                  className="p-6 border rounded-2xl bg-white hover:border-indigo-500 transition-all cursor-pointer group"
+                  className="p-6 border rounded-2xl bg-white hover:border-indigo-500 transition-all group relative"
                 >
                   <div className="w-12 h-12 bg-cyan-100 rounded-xl flex items-center justify-center mb-4 text-cyan-600 group-hover:scale-110 transition-transform">
                     {confluenceLoading ? <RefreshCw className="w-6 h-6 animate-spin" /> : <CloudDownload className="w-6 h-6" />}
                   </div>
                   <h3 className="font-bold text-gray-900">Confluence</h3>
                   <p className="text-xs text-gray-500 mt-1">Extract requirements from Confluence documentation pages.</p>
-                  <button className="mt-4 text-xs font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-50" disabled={confluenceLoading}>
+                  
+                  <div className="mt-4 space-y-2" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="text"
+                      placeholder="Confluence Page ID (e.g. 123456)"
+                      value={confluencePageId}
+                      onChange={(e) => setConfluencePageId(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs rounded-lg border-gray-200 focus:border-indigo-500 focus:ring-indigo-500"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Or enter Confluence URL"
+                      value={confluenceUrl}
+                      onChange={(e) => setConfluenceUrl(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs rounded-lg border-gray-200 focus:border-indigo-500 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); fetchFromConfluence(); }}
+                    className="mt-4 w-full px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 shadow-sm transition-all" 
+                    disabled={confluenceLoading}
+                  >
                     {confluenceLoading ? "Syncing..." : "Sync Now →"}
                   </button>
                 </div>
@@ -602,6 +785,167 @@ const Collection = () => {
                   className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 shadow-md transition-all font-semibold"
                 >
                   Create
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Confirm & Add Requirement Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden transform transition-all scale-100 max-h-[90vh] flex flex-col">
+            <div className="px-8 py-6 border-b bg-indigo-50 flex justify-between items-center">
+              <div>
+                <h3 className="text-xl font-bold text-gray-900">Confirm & Add Security Requirement</h3>
+                <p className="text-xs text-gray-600 mt-1">Review, refine, and link this security requirement to your matrix.</p>
+              </div>
+              <button 
+                onClick={() => setShowAddModal(false)}
+                className="text-gray-400 hover:text-gray-600 text-xl font-semibold"
+              >
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmSave} className="p-8 space-y-4 overflow-y-auto flex-1 text-left">
+              <div className="grid grid-cols-2 gap-4">
+                {/* ID */}
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Requirement ID *</label>
+                  <input
+                    type="text"
+                    required
+                    pattern="^REQ-[0-9]{4}-[0-9]{3}$"
+                    value={requirementForm.id}
+                    onChange={(e) => setRequirementForm({ ...requirementForm, id: e.target.value })}
+                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-indigo-500 text-sm"
+                    placeholder="REQ-YYYY-NNN"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-0.5">Format: REQ-YYYY-NNN (e.g. REQ-2026-101)</p>
+                </div>
+
+                {/* Title */}
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Title *</label>
+                  <input
+                    type="text"
+                    required
+                    value={requirementForm.title}
+                    onChange={(e) => setRequirementForm({ ...requirementForm, title: e.target.value })}
+                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-indigo-500 text-sm"
+                    placeholder="e.g. Implement Multi-Factor Authentication"
+                  />
+                </div>
+
+                {/* Description */}
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Description *</label>
+                  <textarea
+                    required
+                    rows={3}
+                    value={requirementForm.description}
+                    onChange={(e) => setRequirementForm({ ...requirementForm, description: e.target.value })}
+                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-indigo-500 text-sm"
+                    placeholder="Describe the requirement in detail..."
+                  />
+                </div>
+
+                {/* Category */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Category *</label>
+                  <select
+                    value={requirementForm.category}
+                    onChange={(e) => setRequirementForm({ ...requirementForm, category: e.target.value })}
+                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-indigo-500 text-sm bg-white"
+                  >
+                    {VALID_CATEGORIES.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Priority */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Priority *</label>
+                  <select
+                    value={requirementForm.priority}
+                    onChange={(e) => setRequirementForm({ ...requirementForm, priority: e.target.value })}
+                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-indigo-500 text-sm bg-white"
+                  >
+                    {["Critical", "High", "Medium", "Low"].map(pri => (
+                      <option key={pri} value={pri}>{pri}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Status */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Status *</label>
+                  <select
+                    value={requirementForm.status}
+                    onChange={(e) => setRequirementForm({ ...requirementForm, status: e.target.value })}
+                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-indigo-500 text-sm bg-white"
+                  >
+                    {["Draft", "Approved", "In Progress", "Implemented", "Rejected", "Mapped"].map(st => (
+                      <option key={st} value={st}>{st}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Owner */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Owner</label>
+                  <input
+                    type="text"
+                    value={requirementForm.owner}
+                    onChange={(e) => setRequirementForm({ ...requirementForm, owner: e.target.value })}
+                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-indigo-500 text-sm"
+                    placeholder="e.g. Security Officer"
+                  />
+                </div>
+
+                {/* Verification Method */}
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Verification Method</label>
+                  <input
+                    type="text"
+                    value={requirementForm.verification_method}
+                    onChange={(e) => setRequirementForm({ ...requirementForm, verification_method: e.target.value })}
+                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-indigo-500 text-sm"
+                    placeholder="e.g. Manual testing and penetration test"
+                  />
+                </div>
+
+                {/* Acceptance Criteria */}
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Acceptance Criteria</label>
+                  <textarea
+                    rows={3}
+                    value={requirementForm.acceptance_criteria}
+                    onChange={(e) => setRequirementForm({ ...requirementForm, acceptance_criteria: e.target.value })}
+                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-indigo-500 text-sm"
+                    placeholder="Enter each criterion on a new line..."
+                  />
+                </div>
+              </div>
+
+              <div className="pt-4 flex space-x-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors font-semibold text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className={`flex-1 px-4 py-2.5 text-white rounded-xl shadow-md transition-all font-semibold text-sm ${
+                    saving ? "bg-indigo-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"
+                  }`}
+                >
+                  {saving ? "Adding..." : "Confirm & Add"}
                 </button>
               </div>
             </form>

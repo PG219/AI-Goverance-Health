@@ -1,5 +1,14 @@
 import { authenticateToken } from "../middleware/auth.js";
 import Project from "../models/Projects.js";
+import Risks from "../models/Risks.js";
+import ControlAssessment from "../models/ControlAssessment.js";
+import Comments from "../models/Comments.js";
+import GovernanceAssessmentScore from "../models/GovernanceAssessmentScore.js";
+import TemplateResponse from "../models/TemplateResponse.js";
+import Asset from "../models/Asset.js";
+import SecurityRequirement from "../models/SecurityRequirement.js";
+import DataElements from "../models/DataElements.js";
+import ThirdParty from "../models/ThirdParty.js";
 import express from "express";
 
 const router = express.Router();
@@ -106,14 +115,28 @@ router.delete("/:projectId", authenticateToken, async (req, res) => {
   try {
     const { projectId } = req.params;
 
-    // If using MongoDB _id:
-const result = await Project.deleteOne({ _id: req.params.projectId, owner: req.user._id });
-
-    if (result.deletedCount === 0) {
+    const project = await Project.findOne({ projectId: req.params.projectId, owner: req.user._id });
+    if (!project) {
       return res
         .status(404)
         .json({ error: "Project not found or you do not have permission" });
     }
+
+    const projectObjectId = project._id;
+
+    // Delete the project
+    await Project.deleteOne({ _id: projectObjectId });
+
+    // Cascade delete related records
+    await Risks.deleteMany({ projectId: req.params.projectId });
+    await ControlAssessment.deleteMany({ projectId: req.params.projectId });
+    await Comments.deleteMany({ projectId: req.params.projectId });
+    await GovernanceAssessmentScore.deleteMany({ projectId: req.params.projectId });
+    await TemplateResponse.deleteMany({ projectId: req.params.projectId });
+    await Asset.deleteMany({ project: projectObjectId });
+    await SecurityRequirement.deleteMany({ projectId: req.params.projectId });
+    await DataElements.deleteMany({ projectId: req.params.projectId });
+    await ThirdParty.deleteMany({ projectId: req.params.projectId });
 
     res.status(200).json({ message: "Project deleted successfully" });
   } catch (error) {

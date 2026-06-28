@@ -1,34 +1,25 @@
-# agents/risk_control_agent.py
-
-import os
-import pandas as pd
 import asyncio
+import logging
+import os
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import logging
-from typing import List, Dict, Any, Optional
 
+from .llm_provider import invoke_text
 from .utils import PREDEFINED_RISKS_MARKDOWN
-
-# Vertex AI imports
-import vertexai
-from vertexai.generative_models import GenerativeModel, GenerationConfig
-
-# Initialize Vertex AI
-PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "bionic-mercury-455722-g1")
-LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-MODEL = os.getenv("MODEL", "gemini-2.5-flash-lite")
-vertexai.init(project=PROJECT, location=LOCATION)
 
 logger = logging.getLogger("uvicorn")
 router = APIRouter()
 
-# --- Pydantic Models (Unchanged) ---
+
 class RiskControlIn(BaseModel):
     summary: str
     session_id: str
     project_id: str | None = None
     controls_path: str = "predefined_controls.xlsx"
+
 
 class RiskOut(BaseModel):
     risk_id: str
@@ -39,6 +30,7 @@ class RiskOut(BaseModel):
     justification: str
     mitigation: str
     target_date: str
+
 
 class ControlOut(BaseModel):
     control_id: str
@@ -51,6 +43,7 @@ class ControlOut(BaseModel):
     tickets: str
     related_risk: str
 
+
 class RiskControlOut(BaseModel):
     session_id: str
     project_id: str | None
@@ -61,18 +54,20 @@ class RiskControlOut(BaseModel):
     parsed_controls: List[ControlOut]
     stored_in_db: bool = False
 
-# --- Control Loading Functions (Unchanged) ---
+
 def load_predefined_controls(path: str) -> Optional[pd.DataFrame]:
     try:
         if not os.path.exists(path):
             logger.warning(f"Controls file not found: {path}. Using default controls.")
             return create_default_controls()
+
         controls_df = pd.read_excel(path)
         logger.info("Successfully loaded predefined controls from Excel.")
         return controls_df
-    except Exception as e:
-        logger.error(f"Error reading controls file: {e}. Using default controls.")
+    except Exception as exc:
+        logger.error(f"Error reading controls file: {exc}. Using default controls.")
         return create_default_controls()
+
 
 def create_default_controls() -> pd.DataFrame:
     default_controls = [
@@ -80,62 +75,64 @@ def create_default_controls() -> pd.DataFrame:
         {"CODE": "DM-001", "SECTION": "Data Management", "CONTROL": "Data Encryption", "REQUIREMENTS": "Encrypt sensitive data at rest and in transit"},
         {"CODE": "AI-001", "SECTION": "AI Governance", "CONTROL": "Model Validation", "REQUIREMENTS": "Validate AI models before deployment"},
         {"CODE": "SC-001", "SECTION": "Security", "CONTROL": "Vulnerability Assessment", "REQUIREMENTS": "Conduct regular security assessments"},
-        {"CODE": "CM-001", "SECTION": "Compliance", "CONTROL": "Regulatory Compliance", "REQUIREMENTS": "Ensure compliance with relevant regulations"}
+        {"CODE": "CM-001", "SECTION": "Compliance", "CONTROL": "Regulatory Compliance", "REQUIREMENTS": "Ensure compliance with relevant regulations"},
     ]
     return pd.DataFrame(default_controls)
 
-# --- Risk Parsing Function (Unchanged) ---
+
 def parse_markdown_table(table_content: str, risk_assessment_id: str) -> List[Dict[str, Any]]:
-    risks = []
-    lines = table_content.strip().split('\n')
-    data_lines = [line for line in lines if line.strip() and '|' in line and not line.startswith('|--')]
+    risks: List[Dict[str, Any]] = []
+    lines = table_content.strip().split("\n")
+    data_lines = [line for line in lines if line.strip() and "|" in line and not line.startswith("|--")]
     if len(data_lines) > 1:
         data_lines = data_lines[1:]
+
     for line in data_lines:
-        cells = [cell.strip() for cell in line.split('|') if cell.strip()]
+        cells = [cell.strip() for cell in line.split("|") if cell.strip()]
         if len(cells) >= 7:
-            risk_id = cells[0]
-            risk = {
-                'risk_id': risk_id,
-                'risk_assessment_id': risk_assessment_id,
-                'risk_name': cells[1],
-                'risk_owner': cells[2],
-                'severity': int(cells[3]) if cells[3].isdigit() else 3,
-                'justification': cells[4],
-                'mitigation': cells[5],
-                'target_date': cells[6]
-            }
-            risks.append(risk)
+            risks.append(
+                {
+                    "risk_id": cells[0],
+                    "risk_assessment_id": risk_assessment_id,
+                    "risk_name": cells[1],
+                    "risk_owner": cells[2],
+                    "severity": int(cells[3]) if cells[3].isdigit() else 3,
+                    "justification": cells[4],
+                    "mitigation": cells[5],
+                    "target_date": cells[6],
+                }
+            )
     return risks
 
-# --- Control Parsing Function (Unchanged) ---
+
 def parse_control_table(table_content: str, risk_assessment_id: str) -> List[Dict[str, Any]]:
-    controls = []
-    lines = table_content.strip().split('\n')
-    data_lines = [line for line in lines if line.strip() and '|' in line and '---' not in line]
+    controls: List[Dict[str, Any]] = []
+    lines = table_content.strip().split("\n")
+    data_lines = [line for line in lines if line.strip() and "|" in line and "---" not in line]
     if len(data_lines) > 1:
         data_lines = data_lines[1:]
+
     control_counter = 1
     for line in data_lines:
-        cells = [cell.strip() for cell in line.split('|') if cell.strip()]
+        cells = [cell.strip() for cell in line.split("|") if cell.strip()]
         if len(cells) >= 7:
-            control_id = f"CTRL-{risk_assessment_id}-{control_counter:03d}"
-            control = {
-                'control_id': control_id,
-                'risk_assessment_id': risk_assessment_id,
-                'code': cells[0],
-                'section': cells[1],
-                'control': cells[2],
-                'requirements': cells[3],
-                'status': cells[4],
-                'tickets': cells[5],
-                'related_risk': cells[6]
-            }
-            controls.append(control)
+            controls.append(
+                {
+                    "control_id": f"CTRL-{risk_assessment_id}-{control_counter:03d}",
+                    "risk_assessment_id": risk_assessment_id,
+                    "code": cells[0],
+                    "section": cells[1],
+                    "control": cells[2],
+                    "requirements": cells[3],
+                    "status": cells[4],
+                    "tickets": cells[5],
+                    "related_risk": cells[6],
+                }
+            )
             control_counter += 1
     return controls
 
-# --- UPDATED: Risk Generation Function using Vertex AI ---
+
 async def generate_risk_matrix(summary: str) -> str:
     system_prompt = f"""
 You are a risk analysis expert. Your task is to identify applicable risks from a predefined library based on a user's summary.
@@ -152,17 +149,19 @@ Output ONLY a Markdown table with the following columns:
 Do not add any introductory text.
 """
     try:
-        model = GenerativeModel(MODEL)
-        response = model.generate_content(
-            f"{system_prompt}\n\nUser Summary: {summary}",
-            generation_config=GenerationConfig(temperature=0.5, max_output_tokens=800)
+        return await asyncio.to_thread(
+            invoke_text,
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": summary},
+            ],
+            0.5,
         )
-        return response.text.strip()
-    except Exception as e:
-        logger.error(f"Error generating risk matrix: {str(e)}")
-        raise HTTPException(500, f"Error generating risk matrix: {str(e)}")
+    except Exception as exc:
+        logger.error(f"Error generating risk matrix: {exc}", exc_info=True)
+        raise HTTPException(500, f"Error generating risk matrix: {str(exc)}")
 
-# --- UPDATED: Control Generation Function using Vertex AI ---
+
 async def generate_control_matrix(risk_matrix: str, controls_df: pd.DataFrame) -> str:
     controls_markdown = controls_df.to_markdown(index=False)
     system_prompt = f"""
@@ -187,17 +186,19 @@ Your task is to analyze an incoming risk matrix and map appropriate controls to 
 Do not include any prefix or explanation text, just the markdown table.
 """
     try:
-        model = GenerativeModel(MODEL)
-        response = model.generate_content(
-            f"{system_prompt}\n\nRisk Matrix:\n{risk_matrix}",
-            generation_config=GenerationConfig(temperature=0.3, max_output_tokens=1000)
+        return await asyncio.to_thread(
+            invoke_text,
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Please perform a control assessment based on the following risk matrix:\n\n{risk_matrix}"},
+            ],
+            0.3,
         )
-        return response.text.strip()
-    except Exception as e:
-        logger.error(f"Error generating control matrix: {str(e)}")
-        raise HTTPException(500, f"Error generating control matrix: {str(e)}")
+    except Exception as exc:
+        logger.error(f"Error generating control matrix: {exc}", exc_info=True)
+        raise HTTPException(500, f"Error generating control matrix: {str(exc)}")
 
-# --- Main Endpoint (Logic Unchanged) ---
+
 @router.post("/", response_model=RiskControlOut)
 async def run_risk_control_assessment(payload: RiskControlIn):
     summary = payload.summary.strip()
@@ -240,11 +241,10 @@ async def run_risk_control_assessment(payload: RiskControlIn):
             control_matrix=control_matrix,
             parsed_risks=parsed_risks,
             parsed_controls=parsed_controls,
-            stored_in_db=False
+            stored_in_db=False,
         )
-
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error in risk-control assessment: {str(e)}", exc_info=True)
-        raise HTTPException(500, f"Internal server error: {str(e)}")
+    except Exception as exc:
+        logger.error(f"Critical error in risk-control assessment: {exc}", exc_info=True)
+        raise HTTPException(500, f"Internal server error: {str(exc)}")

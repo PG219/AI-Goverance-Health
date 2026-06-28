@@ -14,17 +14,30 @@ const ProjectRisks = ({ projectId }) => {
   ]);
   const [loading, setLoading] = useState(false);
 
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalRisks, setTotalRisks] = useState(0);
+
   useEffect(() => {
     if (projectId) {
-      fetchProjectRisks();
+      fetchProjectRisks(page, limit);
     }
-  }, [projectId]);
+  }, [projectId, page, limit]);
 
-  const fetchProjectRisks = async () => {
+  const fetchProjectRisks = async (currentPage = page, currentLimit = limit) => {
     try {
       setLoading(true);
-      const response = await riskMatrixService.getRisksByProject(projectId);
+      const response = await riskMatrixService.getRisksByProject(projectId, {
+        page: currentPage,
+        limit: currentLimit,
+      });
       const projectRisks = response.risks || [];
+      const total = response.pagination?.total || 0;
+      const pages = response.pagination?.pages || 1;
+
+      setTotalRisks(total);
+      setTotalPages(pages);
 
       // Update risks data
       setRisks(
@@ -51,9 +64,22 @@ const ProjectRisks = ({ projectId }) => {
         }))
       );
 
-      // Calculate risk summary
-      const summary = calculateRiskSummary(projectRisks);
-      setRiskSummary(summary);
+      // Fetch overall project risk stats for the summary bar
+      try {
+        const stats = await riskMatrixService.getRiskStatistics(projectId);
+        const levels = stats.riskLevels || {};
+        setRiskSummary([
+          { label: "Very High", color: "red", count: levels.Critical || 0 },
+          { label: "High", color: "orange", count: levels.High || 0 },
+          { label: "Medium", color: "amber", count: levels.Medium || 0 },
+          { label: "Low", color: "green", count: levels.Low || 0 },
+          { label: "Very Low", color: "teal", count: levels['Very Low'] || 0 },
+        ]);
+      } catch (statsErr) {
+        console.error("Failed to fetch risk stats, falling back to page calculation", statsErr);
+        const summary = calculateRiskSummary(projectRisks);
+        setRiskSummary(summary);
+      }
     } catch (error) {
       console.error("Error fetching project risks:", error);
     } finally {
@@ -126,6 +152,32 @@ const ProjectRisks = ({ projectId }) => {
     }
   };
 
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState("");
+  const [genSuccess, setGenSuccess] = useState("");
+
+  const handleGenerateRisks = async () => {
+    try {
+      setGenerating(true);
+      setGenError("");
+      setGenSuccess("");
+      await riskMatrixService.generateProjectRisks(projectId);
+      setGenSuccess("AI Risks and Controls generated successfully! Governance scores recalculated.");
+      fetchProjectRisks();
+      setTimeout(() => {
+        setGenSuccess("");
+      }, 5000);
+    } catch (err) {
+      console.error("Failed to generate AI risks:", err);
+      setGenError(err.message || "Failed to generate AI risks");
+      setTimeout(() => {
+        setGenError("");
+      }, 5000);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   return (
     <div className="p-8">
       {/* Risk Summary Bar */}
@@ -142,11 +194,60 @@ const ProjectRisks = ({ projectId }) => {
         ))}
       </div>
 
-      {/* Header and Add Risk Modal */}
+      {/* Header and Actions */}
       <div className="flex justify-between items-center mb-4">
-        <div className="text-lg font-semibold">Project risks</div>
-        <AddRiskModal onAddRisk={handleAddRisk} />
+        <div className="text-lg font-semibold flex items-center gap-2">
+          <span>Project risks</span>
+          {generating && (
+            <span className="text-xs text-indigo-600 animate-pulse font-normal">
+              (AI Agent is assessing risks based on questionnaire, assets & requirements...)
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleGenerateRisks}
+            disabled={generating || loading}
+            className={`px-4 py-2 rounded-lg font-medium text-sm transition-all duration-300 shadow-md flex items-center gap-2 text-white bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-700 hover:via-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transform hover:-translate-y-0.5 active:translate-y-0`}
+          >
+            {generating ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" width="16" height="16">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                Generating Risks...
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="16" height="16">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 21l8.982-8.982M18 10a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Generate/Regenerate AI Risks
+              </>
+            )}
+          </button>
+          <AddRiskModal onAddRisk={handleAddRisk} />
+        </div>
       </div>
+
+      {/* Messages */}
+      {genSuccess && (
+        <div className="mb-4 p-3 bg-green-50 text-green-700 border border-green-200 rounded-lg text-sm font-medium animate-fade-in flex items-center gap-2">
+          <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="20" height="20">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          {genSuccess}
+        </div>
+      )}
+      {genError && (
+        <div className="mb-4 p-3 bg-red-50 text-red-700 border border-red-200 rounded-lg text-sm font-medium animate-fade-in flex items-center gap-2">
+          <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="20" height="20">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          {genError}
+        </div>
+      )}
 
       {/* Risks Table */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-x-auto">
@@ -222,26 +323,49 @@ const ProjectRisks = ({ projectId }) => {
           <div>
             {loading
               ? "Loading..."
-              : `Showing 1 - ${risks.length} of ${risks.length} project risk(s)`}
+              : `Showing ${totalRisks === 0 ? 0 : (page - 1) * limit + 1} - ${Math.min(page * limit, totalRisks)} of ${totalRisks} project risk(s)`}
           </div>
           <div className="flex items-center gap-2">
             <span>Project risks per page</span>
-            <select className="border rounded px-2 py-1">
-              <option>5</option>
-              <option>10</option>
-              <option>15</option>
+            <select
+              className="border rounded px-2 py-1 cursor-pointer"
+              value={limit}
+              onChange={(e) => {
+                setLimit(parseInt(e.target.value));
+                setPage(1);
+              }}
+            >
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={15}>15</option>
             </select>
-            <span>Page 1 of 1</span>
-            <button disabled className="text-gray-300 px-1">
+            <span>Page {page} of {totalPages}</span>
+            <button
+              disabled={page === 1 || loading}
+              onClick={() => setPage(1)}
+              className={`${page === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-black cursor-pointer'} px-1 font-semibold`}
+            >
               &lt;&lt;
             </button>
-            <button disabled className="text-gray-300 px-1">
+            <button
+              disabled={page === 1 || loading}
+              onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
+              className={`${page === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-black cursor-pointer'} px-1 font-semibold`}
+            >
               &lt;
             </button>
-            <button disabled className="text-gray-300 px-1">
+            <button
+              disabled={page === totalPages || loading}
+              onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
+              className={`${page === totalPages ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-black cursor-pointer'} px-1 font-semibold`}
+            >
               &gt;
             </button>
-            <button disabled className="text-gray-300 px-1">
+            <button
+              disabled={page === totalPages || loading}
+              onClick={() => setPage(totalPages)}
+              className={`${page === totalPages ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-black cursor-pointer'} px-1 font-semibold`}
+            >
               &gt;&gt;
             </button>
           </div>

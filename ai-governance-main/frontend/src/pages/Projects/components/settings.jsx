@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { BACKEND_URL } from "@/config/env";
 import TextField from "@mui/material/TextField";
 import Select from "@mui/material/Select";
 import MenuItem from "@mui/material/MenuItem";
@@ -20,7 +21,7 @@ const regulations = ["ISO 42001", "EU AI Act", "NIST AI RMF", "GDPR"];
 const riskLevels = ["High risk", "Medium risk", "Low risk"];
 const highRiskRoles = ["Deployer", "Developer", "Operator", "Maintainer"];
 
-const BASE_URL = "http://localhost:3001"; // backend port
+const BASE_URL = BACKEND_URL; // backend port
 
 const Settings = ({ project }) => {
   const [projectTitle, setProjectTitle] = useState("");

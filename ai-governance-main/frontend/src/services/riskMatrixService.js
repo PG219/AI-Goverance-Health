@@ -259,6 +259,21 @@ class RiskMatrixService {
       );
     }
   }
+
+  // Generate or regenerate risks specifically for a project based on its assets, requirements and questionnaire responses
+  async generateProjectRisks(projectId) {
+    try {
+      const response = await api.post(`/questionnaire/project/${projectId}/generate`);
+      return response.data;
+    } catch (error) {
+      if (error.response?.status === 502) {
+        throw new Error("502 Bad Gateway: The LLM service failed to respond.");
+      }
+      throw new Error(
+        error.response?.data?.error || "Failed to generate risks for project"
+      );
+    }
+  }
 }
 
 export default new RiskMatrixService();

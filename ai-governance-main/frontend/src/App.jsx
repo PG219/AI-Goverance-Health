@@ -36,6 +36,7 @@ import Support from "./support";
 import RateLimitSnackbar from "./components/rateLimitSnackbar";
 import RequirementsPage from "./pages/requirements";
 import Collection from "./pages/Collection/Collection";
+import NotificationModal from "./components/NotificationModal";
 
 function AppRoutes() {
   return (
@@ -91,6 +92,15 @@ export default function App() {
   const [resetTime, setResetTime] = useState(0);
 
   useEffect(() => {
+    // Expose a global notification helper
+    window.showNotification = (type, title, message, duration = 4000) => {
+      window.dispatchEvent(
+        new CustomEvent("showNotification", {
+          detail: { type, title, message, duration }
+        })
+      );
+    };
+
     // Listen for the 429 global event
     const handleRateLimit = (event) => {
       const { resetTimeSeconds } = event.detail;
@@ -109,6 +119,9 @@ export default function App() {
     <AuthProvider>
       <Router>
         <AppRoutes />
+
+        {/* ✅ Global Notification Modal */}
+        <NotificationModal />
 
         {/* ✅ Global Snackbar */}
         <RateLimitSnackbar

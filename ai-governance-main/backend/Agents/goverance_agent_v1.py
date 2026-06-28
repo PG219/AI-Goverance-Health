@@ -226,8 +226,11 @@ The rationale must be concise (<= 60 words) and reference the policy document.
 def vertex_rate_answers(model_name: str, project: str, location: str,
                         question: str, answer: str, policy_documents: str) -> List[AnswerRating]:
     try:
-        creds = service_account.Credentials.from_service_account_file("service.json")
-        vertexai_init(project=project, location=location, credentials=creds)
+        if os.path.exists("service.json"):
+            creds = service_account.Credentials.from_service_account_file("service.json")
+            vertexai_init(project=project, location=location, credentials=creds)
+        else:
+            vertexai_init(project=project, location=location)
         model = GenerativeModel(model_name, system_instruction=[SYSTEM_SCORING_INSTRUCTIONS])
 
         user_prompt = {"policy_documents": policy_documents, "question": question, "answer": answer}

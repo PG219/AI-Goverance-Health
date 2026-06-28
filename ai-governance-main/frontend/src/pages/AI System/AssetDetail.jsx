@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { BACKEND_URL } from "@/config/env";
 import {
   Card,
   CardContent,
@@ -61,18 +62,45 @@ const AssetDetail = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("overview");
   const [isAddRiskOpen, setIsAddRiskOpen] = useState(false);
+  const [asset, setAsset] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // Mock asset data
+  useEffect(() => {
+    const fetchAsset = async () => {
+      try {
+        setLoading(true);
+        const token = localStorage.getItem("token");
+        const res = await fetch(`${BACKEND_URL}/assets/${assetId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const json = await res.json();
+        if (json.success) {
+          setAsset(json.data);
+        }
+      } catch (err) {
+        console.error("Error fetching asset details:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchAsset();
+  }, [assetId]);
+
+  const activeAsset = asset || {};
   const assetData = {
     id: assetId,
-    name: "Call Center AI Assistant",
-    type: "NLP Model",
-    risk: "Medium",
+    name: activeAsset.name || "Call Center AI Assistant",
+    type: activeAsset.type || "NLP Model",
+    risk: activeAsset.riskLevel
+      ? activeAsset.riskLevel.charAt(0).toUpperCase() + activeAsset.riskLevel.slice(1).toLowerCase()
+      : "Medium",
     compliance: 79,
-    status: "Active",
-    description: "AI assistant for call center operations and customer support",
+    status: activeAsset.status
+      ? activeAsset.status.charAt(0).toUpperCase() + activeAsset.status.slice(1).toLowerCase()
+      : "Active",
+    description: activeAsset.description || "AI assistant for call center operations and customer support",
     frameworks: ["GDPR", "AI Act", "CCPA"],
-    lastUpdated: "2024-01-11",
+    lastUpdated: activeAsset.updatedAt ? new Date(activeAsset.updatedAt).toISOString().split('T')[0] : "2024-01-11",
     overview: {
       totalCalls: 15420,
       successRate: 87,
@@ -113,6 +141,67 @@ const AssetDetail = () => {
       },
     ],
   };
+
+  const getFrameworksForType = (type = "") => {
+    const t = type.toLowerCase();
+    if (t.includes("model") || t.includes("speech") || t.includes("vision") || t.includes("nlp") || t.includes("ai")) {
+      return [
+        {
+          name: "NIST AI RMF",
+          desc: "National Institute of Standards and Technology Artificial Intelligence Risk Management Framework"
+        },
+        {
+          name: "EU AI Act",
+          desc: "European Artificial Intelligence Act establishing harmonised rules on artificial intelligence"
+        },
+        {
+          name: "ISO 42001 Standard",
+          desc: "International Standard for implementing, maintaining, and continually improving an Artificial Intelligence Management System"
+        }
+      ];
+    } else if (t.includes("dataset") || t.includes("data")) {
+      return [
+        {
+          name: "GDPR",
+          desc: "General Data Protection Regulation for personal data protection and privacy in the EU"
+        },
+        {
+          name: "HIPAA",
+          desc: "Health Insurance Portability and Accountability Act safeguarding sensitive medical information"
+        },
+        {
+          name: "CCPA",
+          desc: "California Consumer Privacy Act providing data privacy rights and consumer protection"
+        }
+      ];
+    } else {
+      return [
+        {
+          name: "ISO 27001",
+          desc: "International Standard for Information Security Management Systems (ISMS)"
+        },
+        {
+          name: "NIST CSF",
+          desc: "NIST Cybersecurity Framework for improving critical infrastructure cybersecurity"
+        },
+        {
+          name: "OWASP ASVS",
+          desc: "OWASP Application Security Verification Standard for validating web application security controls"
+        }
+      ];
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex-1 min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
+          <p className="text-sm text-muted-foreground mt-4">Loading asset details...</p>
+        </div>
+      </div>
+    );
+  }
 
   const getRiskBadge = (risk) => {
     switch (risk) {
@@ -263,12 +352,14 @@ const AssetDetail = () => {
 
                   <div>
                     <div>Use Case Owner</div>
-                    <div className="text-xl font-bold">John Doe</div>
+                    <div className="text-xl font-bold">{activeAsset.owner || "John Doe"}</div>
                   </div>
 
                   <div>
                     <div>Use Case Team</div>
-                    <div className="text-xl font-bold">Zephyr</div>
+                    <div className="text-xl font-bold">
+                      {activeAsset.project?.projectName || activeAsset.project?.name || activeAsset.project || "Zephyr"}
+                    </div>
                   </div>
                 </div>
 
@@ -276,22 +367,22 @@ const AssetDetail = () => {
                 <div className="flex-[1_1_0%] border-2 h-max p-2 rounded-md bg-white shadow-sm">
                   <div className="flex flex-col gap-1 m-2">
                     <div>Current Status</div>
-                    <div className="ml-1 font-bold">Live</div>
+                    <div className="ml-1 font-bold">{assetData.status}</div>
                   </div>
 
                   <div className="flex flex-col gap-1 m-2">
                     <div>Type</div>
-                    <div className="ml-1 font-bold">External</div>
+                    <div className="ml-1 font-bold">{assetData.type}</div>
                   </div>
 
                   <div className="flex flex-col gap-1 m-2">
                     <div>Overall Risk Level</div>
-                    <div className="ml-1 font-bold">Normal</div>
+                    <div className="ml-1 font-bold">{assetData.risk}</div>
                   </div>
 
                   <div className="flex flex-col gap-1 m-2">
                     <div>Use Case Codename</div>
-                    <div className="ml-1 font-bold">Live</div>
+                    <div className="ml-1 font-bold">{assetData.status}</div>
                   </div>
                 </div>
               </div>
@@ -300,47 +391,20 @@ const AssetDetail = () => {
               <div className="mt-8">
                 <div className="text-2xl font-semibold mb-4">Frameworks</div>
                 <div className="text-lg font-medium text-gray-600 mb-2">
-                  Enabled (4)
+                  Enabled ({getFrameworksForType(assetData.type).length})
                 </div>
 
                 <div className="space-y-4">
-                  {/* Framework Cards */}
-                  <div className="p-4 border rounded bg-gray-50">
-                    <div className="text-pink-700 font-semibold">
-                      NIST AI RMF
+                  {getFrameworksForType(assetData.type).map((fw, index) => (
+                    <div key={index} className="p-4 border rounded bg-gray-50 hover:bg-gray-100 transition-colors">
+                      <div className="text-indigo-700 font-semibold">
+                        {fw.name}
+                      </div>
+                      <div className="text-sm text-gray-600 mt-1">
+                        {fw.desc}
+                      </div>
                     </div>
-                    <div className="text-sm text-gray-600">
-                      National Institute of Standards and Technology Artificial
-                      Intelligence Risk Management Framework
-                    </div>
-                  </div>
-
-                  <div className="p-4 border rounded bg-gray-50">
-                    <div className="text-pink-700 font-semibold">EU AI Act</div>
-                    <div className="text-sm text-gray-600">
-                      European Artificial Intelligence Act
-                    </div>
-                  </div>
-
-                  <div className="p-4 border rounded bg-gray-50">
-                    <div className="text-pink-700 font-semibold">
-                      Colorado Life Insurance Regulation
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      Governance and RMF Requirements for ECDIS, Algorithms, and
-                      Predictive Models
-                    </div>
-                  </div>
-
-                  <div className="p-4 border rounded bg-gray-50">
-                    <div className="text-pink-700 font-semibold">
-                      ISO 42001 Standard
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      ISO Standard for implementing and maintaining Artificial
-                      Intelligence Management Systems
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             </div>
