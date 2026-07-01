@@ -61,6 +61,7 @@ const ProjectRisks = ({ projectId }) => {
               })
             : "No target date",
           justification: risk.justification || "No justification provided",
+          isNewRisk: risk.isNewRisk
         }))
       );
 
@@ -280,8 +281,15 @@ const ProjectRisks = ({ projectId }) => {
               </tr>
             ) : (
               risks.map((risk, idx) => (
-                <tr key={idx} className="border-b last:border-0">
-                  <td className="px-4 py-3 font-medium">{risk.id}</td>
+                <tr key={idx} className={`border-b last:border-0 transition-colors duration-250 ${risk.isNewRisk ? 'bg-indigo-50/60 hover:bg-indigo-50' : ''}`}>
+                  <td className="px-4 py-3 font-medium flex items-center gap-2">
+                    {risk.id}
+                    {risk.isNewRisk && (
+                      <span className="px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase text-white bg-gradient-to-r from-indigo-600 to-purple-600 rounded-full shadow-sm">
+                        New
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 font-medium">{risk.name}</td>
                   <td className="px-4 py-3">{risk.owner}</td>
                   <td className="px-4 py-3">{risk.severity}</td>

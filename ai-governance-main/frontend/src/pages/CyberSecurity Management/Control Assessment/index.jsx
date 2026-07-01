@@ -358,9 +358,14 @@ const ControlAssessment = () => {
               <TableBody>
                 {/* 6. Map over the paginated list */}
                 {paginatedControls.map((item) => (
-                  <TableRow key={item._id} className="hover:bg-muted/50">
-                    <TableCell className="font-mono text-sm">
-                      {item.code}
+                  <TableRow key={item._id} className={`hover:bg-muted/50 transition-colors duration-250 ${item.isNewControl ? 'bg-indigo-50/60 dark:bg-indigo-950/20 hover:bg-indigo-100/40' : ''}`}>
+                    <TableCell className="font-mono text-sm flex items-center gap-2">
+                      <span>{item.code}</span>
+                      {item.isNewControl && (
+                        <span className="px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase text-white bg-gradient-to-r from-indigo-600 to-purple-600 rounded-full shadow-sm">
+                          New
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell>{item.section}</TableCell>
                     <TableCell>{item.control}</TableCell>

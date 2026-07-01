@@ -76,6 +76,10 @@ const RisksSchema = new mongoose.Schema({
   systemType: {
     type: String,
     index: true
+  },
+  isNewRisk: {
+    type: Boolean,
+    default: true
   }
 }, {
   timestamps: true,collection: 'Risks'

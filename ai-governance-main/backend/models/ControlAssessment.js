@@ -56,6 +56,10 @@ const ControlSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    isNewControl: {
+      type: Boolean,
+      default: true,
+    },
   },
   { timestamps: true, collection: "ControlAssessments" }
 );

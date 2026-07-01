@@ -232,12 +232,16 @@ router.post('/', async (req, res) => {
               });
               await newAsset.save();
               console.log(`[AUTO DISCOVERY] Registered discovered asset: ${ast.name}`);
-            } else {
-              if (!exists.linkedRequirements.includes(savedReq._id)) {
-                exists.linkedRequirements.push(savedReq._id);
-                await exists.save();
-              }
             }
+          }
+
+          // --- AUTOMATED RISK AND CONTROL ASSESSMENT ---
+          try {
+            const { runRiskControlAssessmentInternal } = await import('./questionnaire.js');
+            await runRiskControlAssessmentInternal(savedReq.projectId, req.user._id);
+            console.log(`[AUTO ASSESSMENT] Automated risk and control assessment complete for project: ${savedReq.projectId}`);
+          } catch (assessErr) {
+            console.error('[AUTO ASSESSMENT ERROR] Failed to automatically assess risks & controls:', assessErr.message);
           }
         } catch (discoveryErr) {
           console.error('[AUTO DISCOVERY ERROR] Failed to discover assets in background:', discoveryErr.message);

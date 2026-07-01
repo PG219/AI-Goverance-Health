@@ -4,8 +4,10 @@ import axios from 'axios';
 import Asset from '../models/Asset.js';
 import SecurityRequirement from '../models/SecurityRequirement.js';
 import Project from '../models/Projects.js';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
+router.use(authenticateToken);
 
 // GET all assets
 router.get('/', async (req, res) => {
@@ -41,6 +43,23 @@ router.post('/', async (req, res) => {
   try {
     const asset = new Asset(req.body);
     await asset.save();
+
+    // --- AUTOMATED RISK AND CONTROL ASSESSMENT (Non-blocking Background Task) ---
+    if (asset.project) {
+      (async () => {
+        try {
+          const projectDoc = await Project.findById(asset.project);
+          if (projectDoc) {
+            const { runRiskControlAssessmentInternal } = await import('./questionnaire.js');
+            await runRiskControlAssessmentInternal(projectDoc.projectId, req.user?._id || projectDoc.owner);
+            console.log(`[AUTO ASSESSMENT] Automated risk and control assessment complete for project (due to new asset): ${projectDoc.projectId}`);
+          }
+        } catch (assessErr) {
+          console.error('[AUTO ASSESSMENT ERROR] Failed to automatically assess risks & controls for asset:', assessErr.message);
+        }
+      })();
+    }
+
     res.status(201).json({ success: true, data: asset });
   } catch (error) {
     if (error.code === 11000)

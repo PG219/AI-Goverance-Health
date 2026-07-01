@@ -33,7 +33,8 @@ class RiskMatrixService {
         mitigation: risk.mitigation,
         targetDate: risk.target_date ? new Date(risk.target_date) : null,
         systemType: systemType || "AI System",
-        createdBy: userId
+        createdBy: userId,
+        isNewRisk: risk.isNewRisk !== undefined ? risk.isNewRisk : true
       }));
       
       const insertedRisks = await RiskMatrixRisk.insertMany(risksToInsert);

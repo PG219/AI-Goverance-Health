@@ -397,210 +397,198 @@ router.post("/process", authenticateToken, async (req, res) => {
   }
 });
 
+// ✅ Core logic to generate or regenerate risks based on questionnaire, assets, and requirements
+export async function runRiskControlAssessmentInternal(projectId, createdBy) {
+  const sessionId = nanoid();
+  const projectDoc = await Project.findOne({ projectId }).select("+questionnaireResponses");
+  if (!projectDoc) {
+    throw new Error(`Project ${projectId} not found`);
+  }
+
+  const questionnaireResponses = projectDoc.questionnaireResponses;
+  const useCaseType = projectDoc.template;
+  if (!questionnaireResponses) {
+    throw new Error("No questionnaire responses found for this project. Please complete the assessment form first.");
+  }
+
+  const summary = await generateSummaryFromResponses(questionnaireResponses);
+
+  // Fetch assets and requirements specifically for this project
+  let assetsContext = "";
+  let reqsContext = "";
+  
+  try {
+    const assets = await Asset.find({ project: projectDoc._id }).lean();
+    if (assets.length > 0) {
+      assetsContext = "\nFoundational Asset Inventory:\n" + assets.map((a, idx) => 
+        `${idx + 1}. Name: ${a.name} | Type: ${a.type} | Risk Level: ${a.riskLevel} | Description: ${a.description}`
+      ).join("\n") + "\n";
+    } else {
+      assetsContext = "\nFoundational Asset Inventory: No assets registered yet for this project.\n";
+    }
+  } catch (assetErr) {
+    console.error("Failed to fetch assets for project risk assessment:", assetErr);
+  }
+
+  try {
+    const reqs = await SecurityRequirement.find({ projectId: projectDoc.projectId }).lean();
+    if (reqs.length > 0) {
+      reqsContext = "\nFoundational User-Saved Requirements:\n" + reqs.map((r, idx) => 
+        `${idx + 1}. Title: ${r.title} | Category: ${r.category} | Priority: ${r.priority} | Description: ${r.description}`
+      ).join("\n") + "\n";
+    } else {
+      reqsContext = "\nFoundational User-Saved Requirements: No requirements registered yet for this project.\n";
+    }
+  } catch (reqErr) {
+    console.error("Failed to fetch requirements for project risk assessment:", reqErr);
+  }
+
+  const finalSummary = `${summary}\n${assetsContext}\n${reqsContext}`;
+
+  const AGENT_BASE = (
+    process.env.AGENT_URL || "http://localhost:8000"
+  ).replace(/\/+$/, "");
+  const family = familyFromUseCase(useCaseType);
+
+  const riskAgentUrl = `${AGENT_BASE}/agent/${family}/risk`;
+  const riskAgentPayload = {
+    session_id: sessionId,
+    project_id: String(projectId),
+    summary: finalSummary,
+  };
+
+  const riskRes = await axios.post(riskAgentUrl, riskAgentPayload, {
+    timeout: 120000,
+  });
+
+  const { risk_assessment_id, parsed_risks = [] } = riskRes.data || {};
+
+  let risksResult = {
+    riskAssessmentId: risk_assessment_id,
+    risksCount: 0,
+    risks: [],
+  };
+
+  // Fetch existing active risks and controls for the project BEFORE deleting them
+  const existingRisks = await RiskMatrixRisk.find({ projectId, isActive: true }).lean();
+  const existingRiskNames = new Set(existingRisks.map(r => r.riskName.toLowerCase()));
+
+  const existingControls = await ControlAssessment.find({ projectId, isActive: true }).lean();
+  const existingControlCodes = new Set(existingControls.map(c => c.code.toLowerCase()));
+
+  // Clean up existing risks and controls for this project first to prevent duplicate accumulation
+  await RiskMatrixRisk.deleteMany({ projectId });
+  await ControlAssessment.deleteMany({ projectId });
+
+  if (Array.isArray(parsed_risks) && parsed_risks.length) {
+    const risksWithNewFlags = parsed_risks.map(r => ({
+      ...r,
+      isNewRisk: !existingRiskNames.has(r.risk_name.toLowerCase())
+    }));
+    risksResult = await RiskMatrixService.storeRisks(
+      { projectId, sessionId, parsedRisks: risksWithNewFlags, systemType: family === "ai" ? "AI System" : "Cybersecurity" },
+      createdBy
+    );
+  }
+
+  const riskIds = Array.isArray(parsed_risks)
+    ? parsed_risks.map((r) => r?.risk_id).filter(Boolean)
+    : [];
+
+  const controlAgentUrl = `${AGENT_BASE}/agent/${family}/controls`;
+  const controlAgentPayload = {
+    session_id: sessionId,
+    project_id: String(projectId),
+    risk_assessment_id,
+    risk_ids: riskIds,
+    risks: parsed_risks,
+  };
+
+  const ctrlRes = await axios.post(controlAgentUrl, controlAgentPayload, {
+    timeout: 120000,
+  });
+
+  const { parsed_controls = [] } = ctrlRes.data || {};
+
+  const normalizedControls = parsed_controls.map((c) => {
+    const related = c.relatedRisks ?? c.related_risk ?? c.relatedRisk;
+    let relatedRisks = Array.isArray(related)
+      ? related.filter(Boolean).map(String)
+      : related
+      ? [String(related)]
+      : [];
+    return {
+      ...c,
+      tickets: typeof c.tickets === "string" ? c.tickets : "",
+      status: "Not Implemented",
+      relatedRisks,
+      isNewControl: !existingControlCodes.has(c.code.toLowerCase())
+    };
+  });
+
+  let controlsResult = { controlsCount: 0, controls: [] };
+  if (normalizedControls.length) {
+    controlsResult = await ControlMatrixService.storeControls(
+      normalizedControls,
+      createdBy,
+      projectId
+    );
+  }
+
+  let governanceReport = null;
+  try {
+    const payload = await prepareGovernancePayload(
+      questionnaireResponses,
+      normalizedControls
+    );
+    const govUrl = `${AGENT_BASE}/agent/governance/assess`;
+
+    const gov = await axios.post(govUrl, payload, { timeout: 180000 });
+    governanceReport = gov.data;
+
+    if (governanceReport?.scores && !governanceReport.error) {
+      const GovernanceAssessmentService = (
+        await import("../services/governanceAssessmentService.js")
+      ).default;
+      const implementedControlsCount = normalizedControls.filter(
+        (c) => c.status === "Implemented" || c.status === "Compliant"
+      ).length;
+      const totalControlsCount = normalizedControls.length;
+      await GovernanceAssessmentService.storeGovernanceScores(
+        projectId,
+        governanceReport,
+        implementedControlsCount,
+        totalControlsCount
+      );
+    }
+  } catch (e) {
+    console.error(
+      `[${sessionId}] Error recalculating governance assessment:`,
+      e.message
+    );
+  }
+
+  return {
+    sessionId,
+    riskAssessmentId: risk_assessment_id,
+    risksCount: risksResult.risksCount,
+    risks: risksResult.risks,
+    controlsCount: controlsResult.controlsCount,
+    controls: controlsResult.controls,
+    governanceReport,
+  };
+}
+
 // ✅ Generate or Regenerate risks based on questionnaire, assets, and requirements specifically linked to the project
 router.post("/project/:projectId/generate", authenticateToken, async (req, res) => {
   const { projectId } = req.params;
   const createdBy = req.user._id;
-  const sessionId = nanoid();
 
   try {
-    const projectDoc = await Project.findOne({ projectId }).select("+questionnaireResponses");
-    if (!projectDoc) {
-      return res.status(404).json({ error: `Project ${projectId} not found` });
-    }
-
-    const questionnaireResponses = projectDoc.questionnaireResponses;
-    const useCaseType = projectDoc.template;
-    if (!questionnaireResponses) {
-      return res.status(400).json({
-        error: "No questionnaire responses found for this project. Please complete the assessment form first.",
-      });
-    }
-
-    const summary = await generateSummaryFromResponses(questionnaireResponses);
-
-    // Fetch assets and requirements specifically for this project
-    let assetsContext = "";
-    let reqsContext = "";
-    
-    try {
-      const assets = await Asset.find({ project: projectDoc._id }).lean();
-      if (assets.length > 0) {
-        assetsContext = "\nFoundational Asset Inventory:\n" + assets.map((a, idx) => 
-          `${idx + 1}. Name: ${a.name} | Type: ${a.type} | Risk Level: ${a.riskLevel} | Description: ${a.description}`
-        ).join("\n") + "\n";
-      } else {
-        assetsContext = "\nFoundational Asset Inventory: No assets registered yet for this project.\n";
-      }
-    } catch (assetErr) {
-      console.error("Failed to fetch assets for project risk assessment:", assetErr);
-    }
-
-    try {
-      const reqs = await SecurityRequirement.find({ projectId: projectDoc.projectId }).lean();
-      if (reqs.length > 0) {
-        reqsContext = "\nFoundational User-Saved Requirements:\n" + reqs.map((r, idx) => 
-          `${idx + 1}. Title: ${r.title} | Category: ${r.category} | Priority: ${r.priority} | Description: ${r.description}`
-        ).join("\n") + "\n";
-      } else {
-        reqsContext = "\nFoundational User-Saved Requirements: No requirements registered yet for this project.\n";
-      }
-    } catch (reqErr) {
-      console.error("Failed to fetch requirements for project risk assessment:", reqErr);
-    }
-
-    const finalSummary = `${summary}\n${assetsContext}\n${reqsContext}`;
-
-    const AGENT_BASE = (
-      process.env.AGENT_URL || "http://localhost:8000"
-    ).replace(/\/+$/, "");
-    const family = familyFromUseCase(useCaseType);
-
-    const riskAgentUrl = `${AGENT_BASE}/agent/${family}/risk`;
-    const riskAgentPayload = {
-      session_id: sessionId,
-      project_id: String(projectId),
-      summary: finalSummary,
-    };
-    let riskRes;
-    try {
-      riskRes = await axios.post(riskAgentUrl, riskAgentPayload, {
-        timeout: 120000,
-      });
-    } catch (e) {
-      const status = e.response?.status || 502;
-      const detail = e.response?.data || e.message || String(e);
-      console.error(
-        `[${sessionId}] Error calling /agent/${family}/risk:`,
-        status,
-        detail
-      );
-      return res.status(status).json({
-        error: `The ${family.toUpperCase()} risk agent failed.`,
-        status,
-        detail,
-      });
-    }
-
-    const { risk_assessment_id, parsed_risks = [] } = riskRes.data || {};
-
-    let risksResult = {
-      riskAssessmentId: risk_assessment_id,
-      risksCount: 0,
-      risks: [],
-    };
-
-    // Clean up existing risks and controls for this project first to prevent duplicate accumulation
-    await RiskMatrixRisk.deleteMany({ projectId });
-    await ControlAssessment.deleteMany({ projectId });
-
-    if (Array.isArray(parsed_risks) && parsed_risks.length) {
-      risksResult = await RiskMatrixService.storeRisks(
-        { projectId, sessionId, parsedRisks: parsed_risks, systemType: family === "ai" ? "AI System" : "Cybersecurity" },
-        createdBy
-      );
-    }
-
-    const riskIds = Array.isArray(parsed_risks)
-      ? parsed_risks.map((r) => r?.risk_id).filter(Boolean)
-      : [];
-
-    const controlAgentUrl = `${AGENT_BASE}/agent/${family}/controls`;
-    const controlAgentPayload = {
-      session_id: sessionId,
-      project_id: String(projectId),
-      risk_assessment_id,
-      risk_ids: riskIds,
-      risks: parsed_risks,
-    };
-    let ctrlRes;
-    try {
-      ctrlRes = await axios.post(controlAgentUrl, controlAgentPayload, {
-        timeout: 120000,
-      });
-    } catch (e) {
-      const status = e.response?.status || 502;
-      const detail = e.response?.data || e.message || String(e);
-      console.error(
-        `[${sessionId}] Error calling /agent/${family}/controls:`,
-        status,
-        detail
-      );
-      return res.status(status).json({
-        error: `The ${family.toUpperCase()} controls agent failed.`,
-        status,
-        detail,
-      });
-    }
-
-    const { parsed_controls = [] } = ctrlRes.data || {};
-
-    const normalizedControls = parsed_controls.map((c) => {
-      const related = c.relatedRisks ?? c.related_risk ?? c.relatedRisk;
-      let relatedRisks = Array.isArray(related)
-        ? related.filter(Boolean).map(String)
-        : related
-        ? [String(related)]
-        : [];
-      return {
-        ...c,
-        tickets: typeof c.tickets === "string" ? c.tickets : "",
-        status: "Not Implemented",
-        relatedRisks,
-      };
-    });
-
-    let controlsResult = { controlsCount: 0, controls: [] };
-    if (normalizedControls.length) {
-      controlsResult = await ControlMatrixService.storeControls(
-        normalizedControls,
-        createdBy,
-        projectId
-      );
-    }
-
-    let governanceReport = null;
-    try {
-      const payload = await prepareGovernancePayload(
-        questionnaireResponses,
-        normalizedControls
-      );
-      const govUrl = `${AGENT_BASE}/agent/governance/assess`;
-
-      const gov = await axios.post(govUrl, payload, { timeout: 180000 });
-      governanceReport = gov.data;
-
-      if (governanceReport?.scores && !governanceReport.error) {
-        const GovernanceAssessmentService = (
-          await import("../services/governanceAssessmentService.js")
-        ).default;
-        const implementedControlsCount = normalizedControls.filter(
-          (c) => c.status === "Implemented" || c.status === "Compliant"
-        ).length;
-        const totalControlsCount = normalizedControls.length;
-        await GovernanceAssessmentService.storeGovernanceScores(
-          projectId,
-          governanceReport,
-          implementedControlsCount,
-          totalControlsCount
-        );
-      }
-    } catch (e) {
-      console.error(
-        `[${sessionId}] Error recalculating governance assessment:`,
-        e.message
-      );
-    }
-
+    const result = await runRiskControlAssessmentInternal(projectId, createdBy);
     return res.status(200).json({
       message: "Risks generated successfully",
-      sessionId,
-      riskAssessmentId: risk_assessment_id,
-      risksCount: risksResult.risksCount,
-      risks: risksResult.risks,
-      controlsCount: controlsResult.controlsCount,
-      controls: controlsResult.controls,
-      governanceReport,
+      ...result
     });
   } catch (error) {
     console.error(`Error in /project/${projectId}/generate route:`, error);

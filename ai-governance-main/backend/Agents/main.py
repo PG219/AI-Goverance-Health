@@ -628,6 +628,9 @@ _safe_include(lambda: __import__("agents.waste.chat_agent", fromlist=["router"])
 _safe_include(lambda: __import__("agents.risk_matrix_agent", fromlist=["router"]).router,
               "/agent/risk-matrix", "risk_matrix_agent")
 
+_safe_include(lambda: __import__("agents.risk_control_agent", fromlist=["router"]).router,
+              "/agent/risk-control", "risk_control_agent")
+
 _safe_include(lambda: __import__("agents.report_agent", fromlist=["router"]).router,
               "/agent/assessment", "report_agent")
 

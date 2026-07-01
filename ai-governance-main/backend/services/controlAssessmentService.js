@@ -42,6 +42,7 @@ function normalizeControl(raw, createdBy, projectId) {
     projectId: projectId ? String(projectId) : undefined,
     relatedRisks, // Guaranteed to be a string
     isActive: true, // Default to active on creation
+    isNewControl: raw.isNewControl !== undefined ? raw.isNewControl : true,
   };
 }
 
